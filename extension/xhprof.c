@@ -19,11 +19,6 @@
 #include "config.h"
 #endif
 
-#ifdef linux
-/* To enable CPU_ZERO and CPU_SET, etc.     */
-# define _GNU_SOURCE
-#endif
-
 #include "php.h"
 #include "php_ini.h"
 #include "ext/standard/info.h"
@@ -35,40 +30,6 @@
 #include <sys/resource.h>
 #include <stdlib.h>
 #include <unistd.h>
-#ifdef __FreeBSD__
-# if __FreeBSD_version >= 700110
-#   include <sys/resource.h>
-#   include <sys/cpuset.h>
-#   define cpu_set_t cpuset_t
-#   define SET_AFFINITY(pid, size, mask) \
-           cpuset_setaffinity(CPU_LEVEL_WHICH, CPU_WHICH_TID, -1, size, mask)
-#   define GET_AFFINITY(pid, size, mask) \
-           cpuset_getaffinity(CPU_LEVEL_WHICH, CPU_WHICH_TID, -1, size, mask)
-# else
-#   error "This version of FreeBSD does not support cpusets"
-# endif /* __FreeBSD_version */
-#elif __APPLE__
-/*
- * Patch for compiling in Mac OS X Leopard
- * @author Svilen Spasov <s.spasov@gmail.com>
- */
-#    include <mach/mach_init.h>
-#    include <mach/thread_policy.h>
-#    define cpu_set_t thread_affinity_policy_data_t
-#    define CPU_SET(cpu_id, new_mask) \
-        (*(new_mask)).affinity_tag = (cpu_id + 1)
-#    define CPU_ZERO(new_mask)                 \
-        (*(new_mask)).affinity_tag = THREAD_AFFINITY_TAG_NULL
-#   define SET_AFFINITY(pid, size, mask)       \
-        thread_policy_set(mach_thread_self(), THREAD_AFFINITY_POLICY, mask, \
-                          THREAD_AFFINITY_POLICY_COUNT)
-#else
-/* For sched_getaffinity, sched_setaffinity */
-# include <sched.h>
-# define SET_AFFINITY(pid, size, mask) sched_setaffinity(0, size, mask)
-# define GET_AFFINITY(pid, size, mask) sched_getaffinity(0, size, mask)
-#endif /* __FreeBSD__ */
-
 
 
 /**
@@ -101,9 +62,6 @@
 #define XHPROF_FLAGS_NO_BUILTINS   0x0001         /* do not profile builtins */
 #define XHPROF_FLAGS_CPU           0x0002      /* gather CPU times for funcs */
 #define XHPROF_FLAGS_MEMORY        0x0004   /* gather memory usage for funcs */
-
-/* Constants for XHPROF_MODE_SAMPLED        */
-#define XHPROF_SAMPLING_INTERVAL       100000      /* In microsecs        */
 
 /* Constant for ignoring functions, transparent to hierarchical profile */
 #define XHPROF_MAX_IGNORED_FUNCTIONS  256
@@ -141,7 +99,7 @@ typedef unsigned char uint8;
 typedef struct hp_entry_t {
   zend_string             *name_hprof;                       /* function name */
   int                     rlvl_hprof;        /* recursion level for function */
-  uint64                  tsc_start;         /* start value for TSC counter  */
+  uint64                  timer_start;              /* start value for timer */
   long int                mu_start_hprof;                    /* memory usage */
   long int                pmu_start_hprof;              /* peak memory usage */
   struct rusage           ru_start_hprof;             /* user/sys time start */
@@ -195,28 +153,6 @@ typedef struct hp_global_t {
   hp_mode_cb       mode_cb;
 
   /*       ----------   Mode specific attributes:  -----------       */
-
-  /* Global to track the time of the last sample in time and ticks */
-  struct timeval   last_sample_time;
-  uint64           last_sample_tsc;
-  /* XHPROF_SAMPLING_INTERVAL in ticks */
-  uint64           sampling_interval_tsc;
-
-  /* This array is used to store cpu frequencies for all available logical
-   * cpus.  For now, we assume the cpu frequencies will not change for power
-   * saving or other reasons. If we need to worry about that in the future, we
-   * can use a periodical timer to re-calculate this arrary every once in a
-   * while (for example, every 1 or 5 seconds). */
-  double *cpu_frequencies;
-
-  /* The number of logical CPUs this machine has. */
-  uint32 cpu_num;
-
-  /* The saved cpu affinity. */
-  cpu_set_t prev_mask;
-
-  /* The cpu id current process is bound to. (default 0) */
-  uint32 cur_cpu_id;
 
   /* XHProf flags */
   uint32 xhprof_flags;
@@ -286,14 +222,11 @@ static void hp_stop(TSRMLS_D);
 static void hp_end(TSRMLS_D);
 
 static inline uint64 cycle_timer();
-static double get_cpu_frequency();
-static void clear_frequencies();
 
 static void hp_free_the_free_list();
 static hp_entry_t *hp_fast_alloc_hprof_entry();
 static void hp_fast_free_hprof_entry(hp_entry_t *p);
 static inline uint8 hp_inline_hash(char * str);
-static void get_all_cpu_frequencies();
 static long get_us_interval(struct timeval *start, struct timeval *end);
 
 static void hp_ignored_functions_filter_init();
@@ -308,14 +241,6 @@ ZEND_BEGIN_ARG_INFO(arginfo_xhprof_disable, 0)
 ZEND_END_ARG_INFO()
 
 /* }}} */
-
-/**
- * *********************
- * FUNCTION PROTOTYPES
- * *********************
- */
-int restore_cpu_affinity(cpu_set_t * prev_mask);
-int bind_to_cpu(uint32 cpu_id);
 
 /**
  * *********************
@@ -418,23 +343,6 @@ PHP_MINIT_FUNCTION(xhprof) {
 
   hp_register_constants(INIT_FUNC_ARGS_PASSTHRU);
 
-  /* Get the number of available logical CPUs. */
-  hp_globals.cpu_num = sysconf(_SC_NPROCESSORS_CONF);
-
-  /* Get the cpu affinity mask. */
-#ifndef __APPLE__
-  if (GET_AFFINITY(0, sizeof(cpu_set_t), &hp_globals.prev_mask) < 0) {
-    perror("getaffinity");
-    return FAILURE;
-  }
-#else
-  CPU_ZERO(&(hp_globals.prev_mask));
-#endif
-
-  /* Initialize cpu_frequencies and cur_cpu_id. */
-  hp_globals.cpu_frequencies = NULL;
-  hp_globals.cur_cpu_id = 0;
-
   hp_globals.stats_count = NULL;
 
   /* no free hp_entry_t structures to start with */
@@ -463,9 +371,6 @@ PHP_MINIT_FUNCTION(xhprof) {
  * Module shutdown callback.
  */
 PHP_MSHUTDOWN_FUNCTION(xhprof) {
-  /* Make sure cpu_frequencies is free'ed. */
-  clear_frequencies();
-
   /* free any remaining items in the free list */
   hp_free_the_free_list();
 
@@ -510,28 +415,8 @@ PHP_RSHUTDOWN_FUNCTION(xhprof) {
  */
 PHP_MINFO_FUNCTION(xhprof)
 {
-  char buf[SCRATCH_BUF_LEN];
-  char tmp[SCRATCH_BUF_LEN];
-  int i;
-  int len;
-
   php_info_print_table_start();
   php_info_print_table_header(2, "xhprof", XHPROF_VERSION);
-  len = snprintf(buf, SCRATCH_BUF_LEN, "%d", hp_globals.cpu_num);
-  buf[len] = 0;
-  php_info_print_table_header(2, "CPU num", buf);
-
-  if (hp_globals.cpu_frequencies) {
-    /* Print available cpu frequencies here. */
-    php_info_print_table_header(2, "CPU logical id", " Clock Rate (MHz) ");
-    for (i = 0; i < hp_globals.cpu_num; ++i) {
-      len = snprintf(buf, SCRATCH_BUF_LEN, " CPU %d ", i);
-      buf[len] = 0;
-      len = snprintf(tmp, SCRATCH_BUF_LEN, "%f", hp_globals.cpu_frequencies[i]);
-      tmp[len] = 0;
-      php_info_print_table_row(2, buf, tmp);
-    }
-  }
 
   php_info_print_table_end();
 }
@@ -630,17 +515,6 @@ void hp_init_profiler_state(int level TSRMLS_DC) {
   
   hp_globals.stats_count = (zval *)emalloc(sizeof(zval));
   array_init(hp_globals.stats_count);
-
-  /* NOTE(cjiang): some fields such as cpu_frequencies take relatively longer
-   * to initialize, (5 milisecond per logical cpu right now), therefore we
-   * calculate them lazily. */
-  if (hp_globals.cpu_frequencies == NULL) {
-    get_all_cpu_frequencies();
-    restore_cpu_affinity(&hp_globals.prev_mask);
-  }
-
-  /* bind to a random cpu so that we can use rdtsc instruction. */
-  bind_to_cpu((int) (rand() % hp_globals.cpu_num));
 
   /* Call current mode's init cb */
   hp_globals.mode_cb.init_cb(TSRMLS_C);
@@ -1023,44 +897,15 @@ void hp_trunc_time(struct timeval *tv,
  */
 
 /**
- * Get time stamp counter (TSC) value via 'rdtsc' instruction.
+ * Get monotonic time stamp.
  *
  * @return 64 bit unsigned integer
- * @author cjiang
  */
 static inline uint64 cycle_timer() {
-  uint32 __a,__d;
-  uint64 val;
-  asm volatile("rdtsc" : "=a" (__a), "=d" (__d));
-  (val) = ((uint64)__a) | (((uint64)__d)<<32);
-  return val;
-}
-
-/**
- * Bind the current process to a specified CPU. This function is to ensure that
- * the OS won't schedule the process to different processors, which would make
- * values read by rdtsc unreliable.
- *
- * @param uint32 cpu_id, the id of the logical cpu to be bound to.
- * @return int, 0 on success, and -1 on failure.
- *
- * @author cjiang
- */
-int bind_to_cpu(uint32 cpu_id) {
-  cpu_set_t new_mask;
-
-  CPU_ZERO(&new_mask);
-  CPU_SET(cpu_id, &new_mask);
-
-  if (SET_AFFINITY(0, sizeof(cpu_set_t), &new_mask) < 0) {
-    perror("setaffinity");
-    return -1;
-  }
-
-  /* record the cpu_id the process is bound to. */
-  hp_globals.cur_cpu_id = cpu_id;
-
-  return 0;
+  struct timespec s;
+  clock_gettime(CLOCK_MONOTONIC, &s);
+ 
+  return s.tv_sec * 1000000 + s.tv_nsec / 1000;
 }
 
 /**
@@ -1070,127 +915,6 @@ static long get_us_interval(struct timeval *start, struct timeval *end) {
   return (((end->tv_sec - start->tv_sec) * 1000000)
           + (end->tv_usec - start->tv_usec));
 }
-
-/**
- * Convert from TSC counter values to equivalent microseconds.
- *
- * @param uint64 count, TSC count value
- * @param double cpu_frequency, the CPU clock rate (MHz)
- * @return 64 bit unsigned integer
- *
- * @author cjiang
- */
-static inline double get_us_from_tsc(uint64 count, double cpu_frequency) {
-  return count / cpu_frequency;
-}
-
-/**
- * Convert microseconds to equivalent TSC counter ticks
- *
- * @param uint64 microseconds
- * @param double cpu_frequency, the CPU clock rate (MHz)
- * @return 64 bit unsigned integer
- *
- * @author veeve
- */
-static inline uint64 get_tsc_from_us(uint64 usecs, double cpu_frequency) {
-  return (uint64) (usecs * cpu_frequency);
-}
-
-/**
- * This is a microbenchmark to get cpu frequency the process is running on. The
- * returned value is used to convert TSC counter values to microseconds.
- *
- * @return double.
- * @author cjiang
- */
-static double get_cpu_frequency() {
-  struct timeval start;
-  struct timeval end;
-
-  if (gettimeofday(&start, 0)) {
-    perror("gettimeofday");
-    return 0.0;
-  }
-  uint64 tsc_start = cycle_timer();
-  /* Sleep for 5 miliseconds. Comparaing with gettimeofday's  few microseconds
-   * execution time, this should be enough. */
-  usleep(5000);
-  if (gettimeofday(&end, 0)) {
-    perror("gettimeofday");
-    return 0.0;
-  }
-  uint64 tsc_end = cycle_timer();
-  return (tsc_end - tsc_start) * 1.0 / (get_us_interval(&start, &end));
-}
-
-/**
- * Calculate frequencies for all available cpus.
- *
- * @author cjiang
- */
-static void get_all_cpu_frequencies() {
-  int id;
-  double frequency;
-
-  hp_globals.cpu_frequencies = malloc(sizeof(double) * hp_globals.cpu_num);
-  if (hp_globals.cpu_frequencies == NULL) {
-    return;
-  }
-
-  /* Iterate over all cpus found on the machine. */
-  for (id = 0; id < hp_globals.cpu_num; ++id) {
-    /* Only get the previous cpu affinity mask for the first call. */
-    if (bind_to_cpu(id)) {
-      clear_frequencies();
-      return;
-    }
-
-    /* Make sure the current process gets scheduled to the target cpu. This
-     * might not be necessary though. */
-    usleep(0);
-
-    frequency = get_cpu_frequency();
-    if (frequency == 0.0) {
-      clear_frequencies();
-      return;
-    }
-    hp_globals.cpu_frequencies[id] = frequency;
-  }
-}
-
-/**
- * Restore cpu affinity mask to a specified value. It returns 0 on success and
- * -1 on failure.
- *
- * @param cpu_set_t * prev_mask, previous cpu affinity mask to be restored to.
- * @return int, 0 on success, and -1 on failure.
- *
- * @author cjiang
- */
-int restore_cpu_affinity(cpu_set_t * prev_mask) {
-  if (SET_AFFINITY(0, sizeof(cpu_set_t), prev_mask) < 0) {
-    perror("restore setaffinity");
-    return -1;
-  }
-  /* default value ofor cur_cpu_id is 0. */
-  hp_globals.cur_cpu_id = 0;
-  return 0;
-}
-
-/**
- * Reclaim the memory allocated for cpu_frequencies.
- *
- * @author cjiang
- */
-static void clear_frequencies() {
-  if (hp_globals.cpu_frequencies) {
-    free(hp_globals.cpu_frequencies);
-    hp_globals.cpu_frequencies = NULL;
-  }
-  restore_cpu_affinity(&hp_globals.prev_mask);
-}
-
 
 /**
  * ***************************
@@ -1260,8 +984,6 @@ void hp_mode_common_endfn(hp_entry_t **entries, hp_entry_t *current TSRMLS_DC) {
 }
 
 
-
-
 /**
  * ************************************
  * XHPROF BEGIN FUNCTION CALLBACKS
@@ -1275,8 +997,7 @@ void hp_mode_common_endfn(hp_entry_t **entries, hp_entry_t *current TSRMLS_DC) {
  */
 void hp_mode_hier_beginfn_cb(hp_entry_t **entries,
                              hp_entry_t  *current  TSRMLS_DC) {
-  /* Get start tsc counter */
-  current->tsc_start = cycle_timer();
+  current->timer_start = cycle_timer();
 
   /* Get CPU usage */
   if (hp_globals.xhprof_flags & XHPROF_FLAGS_CPU) {
@@ -1289,8 +1010,6 @@ void hp_mode_hier_beginfn_cb(hp_entry_t **entries,
     current->pmu_start_hprof = zend_memory_peak_usage(0 TSRMLS_CC);
   }
 }
-
-
 
 
 /**
@@ -1308,11 +1027,10 @@ zval * hp_mode_shared_endfn_cb(hp_entry_t *top,
                                zend_string          *symbol  TSRMLS_DC) {
   zval counts;
   zval *countsp;
-  uint64   tsc_end;
+  uint64 timer_end;
   HashTable *ht;
 
-  /* Get end tsc counter */
-  tsc_end = cycle_timer();
+  timer_end = cycle_timer();
 
   /* Get the stat array */
   /* Bail if something is goofy */
@@ -1331,8 +1049,7 @@ zval * hp_mode_shared_endfn_cb(hp_entry_t *top,
   /* Bump stats in the counts hashtable */
   hp_inc_count(countsp, zend_string_init("ct", sizeof("ct") - 1, 1), 1  TSRMLS_CC);
 
-  hp_inc_count(countsp, zend_string_init("wt", sizeof("wt") - 1, 1), get_us_from_tsc(tsc_end - top->tsc_start,
-        hp_globals.cpu_frequencies[hp_globals.cur_cpu_id]) TSRMLS_CC);
+  hp_inc_count(countsp, zend_string_init("wt", sizeof("wt") - 1, 1), timer_end - top->timer_start);
   return countsp;
 }
 
@@ -1629,9 +1346,6 @@ static void hp_stop(TSRMLS_D) {
     END_PROFILING(&hp_globals.entries, hp_profile_flag);
   }
     
-  /* Resore cpu affinity. */
-  restore_cpu_affinity(&hp_globals.prev_mask);
-
   /* Stop profiling */
   hp_globals.enabled = 0;
 }
