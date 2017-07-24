@@ -147,8 +147,7 @@ static hp_global_t       hp_globals;
 
 
 /* Pointer to the original compile function */
-static zend_op_array * (*_zend_compile_file) (zend_file_handle *file_handle,
-                                              int type TSRMLS_DC);
+static zend_op_array * (*_zend_compile_file) (zend_file_handle *file_handle, int type);
 
 /* Bloom filter for function names to be ignored */
 #define INDEX_2_BYTE(index)  (index >> 3)
@@ -161,16 +160,16 @@ static zend_op_array * (*_zend_compile_file) (zend_file_handle *file_handle,
  */
 
 /* Pointer to the original execute function */
-static void (*_zend_execute_ex) (zend_execute_data *execute_data TSRMLS_DC);
+static void (*_zend_execute_ex) (zend_execute_data *execute_data);
 
 /* Pointer to the origianl execute_internal function */
-static void (*_zend_execute_internal) (zend_execute_data *data, zval *ret TSRMLS_DC);
+static void (*_zend_execute_internal) (zend_execute_data *data, zval *ret);
 
-ZEND_DLEXPORT void hp_execute_internal(zend_execute_data *execute_data, zval* ret TSRMLS_DC);
+ZEND_DLEXPORT void hp_execute_internal(zend_execute_data *execute_data, zval* ret);
 
-ZEND_DLEXPORT void hp_execute_ex (zend_execute_data *execute_data TSRMLS_DC);
+ZEND_DLEXPORT void hp_execute_ex (zend_execute_data *execute_data);
 
-ZEND_DLEXPORT zend_op_array* hp_compile_file(zend_file_handle *file_handle, int type TSRMLS_DC);
+ZEND_DLEXPORT zend_op_array* hp_compile_file(zend_file_handle *file_handle, int type);
 /**
  * ****************************
  * STATIC FUNCTION DECLARATIONS
@@ -178,9 +177,9 @@ ZEND_DLEXPORT zend_op_array* hp_compile_file(zend_file_handle *file_handle, int 
  */
 static void hp_register_constants(INIT_FUNC_ARGS);
 
-static void hp_begin(long xhprof_flags TSRMLS_DC);
-static void hp_stop(TSRMLS_D);
-static void hp_end(TSRMLS_D);
+static void hp_begin(long xhprof_flags);
+static void hp_stop();
+static void hp_end();
 
 static inline uint64 cycle_timer();
 
@@ -266,12 +265,11 @@ PHP_FUNCTION(xhprof_enable) {
   long  xhprof_flags = 0;                                    /* XHProf flags */
   zval *optional_array = NULL;         /* optional array arg: for future use */
 
-  if (zend_parse_parameters(ZEND_NUM_ARGS() TSRMLS_CC,
-                            "|lz", &xhprof_flags, &optional_array) == FAILURE) {
+  if (zend_parse_parameters(ZEND_NUM_ARGS(), "|lz", &xhprof_flags, &optional_array) == FAILURE) {
     return;
   }
 
-  hp_begin(xhprof_flags TSRMLS_CC);
+  hp_begin(xhprof_flags);
 }
 
 /**
@@ -283,7 +281,7 @@ PHP_FUNCTION(xhprof_enable) {
  */
 PHP_FUNCTION(xhprof_disable) {
   if (hp_globals.enabled) {
-    hp_stop(TSRMLS_C);
+    hp_stop();
     RETURN_ZVAL(hp_globals.stats_count, 1, 0);
   }
   /* else null is returned */
@@ -355,7 +353,7 @@ PHP_RINIT_FUNCTION(xhprof) {
  * Request shutdown callback. Stop profiling and return.
  */
 PHP_RSHUTDOWN_FUNCTION(xhprof) {
-  hp_end(TSRMLS_C);
+  hp_end();
   zend_execute_ex       = _zend_execute_ex;
   zend_execute_internal = _zend_execute_internal;
   
@@ -452,7 +450,7 @@ int hp_ignored_functions_filter_collision(uint8 hash) {
  *
  * @author kannan, veeve
  */
-void hp_init_profiler_state(TSRMLS_DC) {
+void hp_init_profiler_state() {
   /* Setup globals */
   if (!hp_globals.ever_enabled) {
     hp_globals.ever_enabled  = 1;
@@ -477,7 +475,7 @@ void hp_init_profiler_state(TSRMLS_DC) {
  *
  * @author kannan, veeve
  */
-void hp_clean_profiler_state(TSRMLS_D) {
+void hp_clean_profiler_state() {
   /* Clear globals */
   if (hp_globals.stats_count) {
     //Z_DELREF_P(hp_globals.stats_count);
@@ -494,11 +492,6 @@ void hp_clean_profiler_state(TSRMLS_D) {
 
 /*
  * Start profiling - called just before calling the actual function
- * NOTE:  PLEASE MAKE SURE TSRMLS_CC IS AVAILABLE IN THE CONTEXT
- *        OF THE FUNCTION WHERE THIS MACRO IS CALLED.
- *        TSRMLS_CC CAN BE MADE AVAILABLE VIA TSRMLS_DC IN THE
- *        CALLING FUNCTION OR BY CALLING TSRMLS_FETCH()
- *        TSRMLS_FETCH() IS RELATIVELY EXPENSIVE.
  */
 #define BEGIN_PROFILING(entries, symbol, profile_curr)                  \
   do {                                                                  \
@@ -511,9 +504,9 @@ void hp_clean_profiler_state(TSRMLS_D) {
       (cur_entry)->name_hprof = symbol;                                 \
       (cur_entry)->prev_hprof = (*(entries));                           \
       /* Call the universal callback */                                 \
-      hp_mode_common_beginfn((entries), (cur_entry) TSRMLS_CC);         \
+      hp_mode_common_beginfn((entries), (cur_entry));                   \
       /* Call the mode's beginfn callback */                            \
-      hp_mode_beginfn_cb((entries), (cur_entry) TSRMLS_CC);             \
+      hp_mode_beginfn_cb((entries), (cur_entry));                       \
       /* Update entries linked list */                                  \
       (*(entries)) = (cur_entry);                                       \
     }                                                                   \
@@ -521,11 +514,6 @@ void hp_clean_profiler_state(TSRMLS_D) {
 
 /*
  * Stop profiling - called just after calling the actual function
- * NOTE:  PLEASE MAKE SURE TSRMLS_CC IS AVAILABLE IN THE CONTEXT
- *        OF THE FUNCTION WHERE THIS MACRO IS CALLED.
- *        TSRMLS_CC CAN BE MADE AVAILABLE VIA TSRMLS_DC IN THE
- *        CALLING FUNCTION OR BY CALLING TSRMLS_FETCH()
- *        TSRMLS_FETCH() IS RELATIVELY EXPENSIVE.
  */
 #define END_PROFILING(entries, profile_curr)                            \
   do {                                                                  \
@@ -535,10 +523,10 @@ void hp_clean_profiler_state(TSRMLS_D) {
       /* NOTE(cjiang): we want to call this 'endfn_cb' before */        \
       /* 'hp_mode_common_endfn' to avoid including the time in */       \
       /* 'hp_mode_common_endfn' in the profiling results.      */       \
-      hp_mode_endfn_cb((entries) TSRMLS_CC);                            \
+      hp_mode_endfn_cb((entries));                                      \
       cur_entry = (*(entries));                                         \
       /* Call the universal callback */                                 \
-      hp_mode_common_endfn((entries), (cur_entry) TSRMLS_CC);           \
+      hp_mode_common_endfn((entries), (cur_entry));                     \
       /* Free top entry and update entries linked list */               \
       (*(entries)) = (*(entries))->prev_hprof;                          \
       hp_fast_free_hprof_entry(cur_entry);                              \
@@ -758,7 +746,7 @@ static void hp_fast_free_hprof_entry(hp_entry_t *p) {
  * @return void
  * @author kannan
  */
-void hp_inc_count(zval *counts, zend_string *name, long count TSRMLS_DC) {
+void hp_inc_count(zval *counts, zend_string *name, long count) {
   HashTable *ht;
   zval *data;
 
@@ -783,7 +771,7 @@ void hp_inc_count(zval *counts, zend_string *name, long count TSRMLS_DC) {
  *
  * @author kannan, veeve
  */
-//zval * hp_hash_lookup(zend_string *symbol  TSRMLS_DC) {
+//zval * hp_hash_lookup(zend_string *symbol) {
 //  HashTable   *ht;
 //  zval        *data;
 //  zval        counts;
@@ -877,8 +865,7 @@ static long get_us_interval(struct timeval *start, struct timeval *end) {
  * @return void
  * @author kannan, veeve
  */
-void hp_mode_common_beginfn(hp_entry_t **entries,
-                            hp_entry_t  *current  TSRMLS_DC) {
+void hp_mode_common_beginfn(hp_entry_t **entries, hp_entry_t  *current) {
   hp_entry_t   *p;
 
   /* This symbol's recursive level */
@@ -907,7 +894,7 @@ void hp_mode_common_beginfn(hp_entry_t **entries,
  * @return void
  * @author kannan, veeve
  */
-void hp_mode_common_endfn(hp_entry_t **entries, hp_entry_t *current TSRMLS_DC) {
+void hp_mode_common_endfn(hp_entry_t **entries, hp_entry_t *current) {
   hp_globals.func_hash_counters[current->hash_code]--;
 }
 
@@ -923,8 +910,7 @@ void hp_mode_common_endfn(hp_entry_t **entries, hp_entry_t *current TSRMLS_DC) {
  *
  * @author kannan
  */
-void hp_mode_beginfn_cb(hp_entry_t **entries,
-                             hp_entry_t  *current  TSRMLS_DC) {
+void hp_mode_beginfn_cb(hp_entry_t **entries, hp_entry_t  *current) {
   current->timer_start = cycle_timer();
 
   /* Get CPU usage */
@@ -934,8 +920,8 @@ void hp_mode_beginfn_cb(hp_entry_t **entries,
 
   /* Get memory usage */
   if (hp_globals.xhprof_flags & XHPROF_FLAGS_MEMORY) {
-    current->mu_start_hprof  = zend_memory_usage(0 TSRMLS_CC);
-    current->pmu_start_hprof = zend_memory_peak_usage(0 TSRMLS_CC);
+    current->mu_start_hprof  = zend_memory_usage(0);
+    current->pmu_start_hprof = zend_memory_peak_usage(0);
   }
 }
 
@@ -951,7 +937,7 @@ void hp_mode_beginfn_cb(hp_entry_t **entries,
  *
  * @author kannan
  */
-void hp_mode_endfn_cb(hp_entry_t **entries  TSRMLS_DC) {
+void hp_mode_endfn_cb(hp_entry_t **entries) {
   hp_entry_t   *top = (*entries);
   //zval            *counts;
   struct rusage    ru_end;
@@ -988,7 +974,7 @@ void hp_mode_endfn_cb(hp_entry_t **entries  TSRMLS_DC) {
   }
 
   /* Bump stats in the counts hashtable */
-  hp_inc_count(countsp, zend_string_init("ct", sizeof("ct") - 1, 1), 1  TSRMLS_CC);
+  hp_inc_count(countsp, zend_string_init("ct", sizeof("ct") - 1, 1), 1);
 
   hp_inc_count(countsp, zend_string_init("wt", sizeof("wt") - 1, 1), timer_end - top->timer_start);
 
@@ -1000,19 +986,18 @@ void hp_mode_endfn_cb(hp_entry_t **entries  TSRMLS_DC) {
     hp_inc_count(countsp, zend_string_init("cpu", sizeof("cpu") - 1, 1), (get_us_interval(&(top->ru_start_hprof.ru_utime),
                                               &(ru_end.ru_utime)) +
                               get_us_interval(&(top->ru_start_hprof.ru_stime),
-                                              &(ru_end.ru_stime)))
-              TSRMLS_CC);
+                                              &(ru_end.ru_stime))));
   }
 
   if (hp_globals.xhprof_flags & XHPROF_FLAGS_MEMORY) {
     /* Get Memory usage */
-    mu_end  = zend_memory_usage(0 TSRMLS_CC);
-    pmu_end = zend_memory_peak_usage(0 TSRMLS_CC);
+    mu_end  = zend_memory_usage(0);
+    pmu_end = zend_memory_peak_usage(0);
 
     /* Bump Memory stats in the counts hashtable */
 
-    hp_inc_count(countsp, zend_string_init("mu", sizeof("mu") - 1, 1),  mu_end - top->mu_start_hprof    TSRMLS_CC);
-    hp_inc_count(countsp, zend_string_init("pmu", sizeof("pmu") - 1, 1), pmu_end - top->pmu_start_hprof  TSRMLS_CC);
+    hp_inc_count(countsp, zend_string_init("mu", sizeof("mu") - 1, 1),  mu_end - top->mu_start_hprof);
+    hp_inc_count(countsp, zend_string_init("pmu", sizeof("pmu") - 1, 1), pmu_end - top->pmu_start_hprof);
   }
 
   zend_string_free(symbol);
@@ -1032,7 +1017,7 @@ void hp_mode_endfn_cb(hp_entry_t **entries  TSRMLS_DC) {
  *
  * @author hzhao, kannan, Jason
  */
-ZEND_DLEXPORT void hp_execute_ex (zend_execute_data *execute_data TSRMLS_DC) {
+ZEND_DLEXPORT void hp_execute_ex (zend_execute_data *execute_data) {
   zend_string   *func = NULL;
   int hp_profile_flag = 1;
   
@@ -1066,12 +1051,12 @@ ZEND_DLEXPORT void hp_execute_ex (zend_execute_data *execute_data TSRMLS_DC) {
 
   if (!func || hp_globals.enabled == 0) {
     if (func) zend_string_free(func);
-	_zend_execute_ex(execute_data TSRMLS_CC);
+	_zend_execute_ex(execute_data);
     return;
   }
 
   BEGIN_PROFILING(&hp_globals.entries, func, hp_profile_flag);
-  _zend_execute_ex(execute_data TSRMLS_CC);
+  _zend_execute_ex(execute_data);
   if (hp_globals.entries) {
     END_PROFILING(&hp_globals.entries, hp_profile_flag);
   }
@@ -1093,7 +1078,7 @@ ZEND_DLEXPORT void hp_execute_ex (zend_execute_data *execute_data TSRMLS_DC) {
 
 
 
-ZEND_DLEXPORT void hp_execute_internal(zend_execute_data *execute_data, zval *ret TSRMLS_DC) {
+ZEND_DLEXPORT void hp_execute_internal(zend_execute_data *execute_data, zval *ret) {
   zend_execute_data *current_data;
   zend_string   *func = NULL;
   int    hp_profile_flag = 1;
@@ -1129,7 +1114,7 @@ ZEND_DLEXPORT void hp_execute_internal(zend_execute_data *execute_data, zval *re
   
   } else {
     /* call the old override */
-    _zend_execute_internal(execute_data, ret TSRMLS_CC);
+    _zend_execute_internal(execute_data, ret);
   }
 
   if (func && strcmp("xhprof_enable", func->val) != 0) {
@@ -1150,9 +1135,7 @@ ZEND_DLEXPORT void hp_execute_internal(zend_execute_data *execute_data, zval *re
  *
  * @author kannan, hzhao
  */
-ZEND_DLEXPORT zend_op_array* hp_compile_file(zend_file_handle *file_handle,
-                                             int type TSRMLS_DC) {
-
+ZEND_DLEXPORT zend_op_array* hp_compile_file(zend_file_handle *file_handle, int type) {
   const char     *filename;
   int             len;
   zend_op_array  *ret;
@@ -1167,7 +1150,7 @@ ZEND_DLEXPORT zend_op_array* hp_compile_file(zend_file_handle *file_handle,
   snprintf(func_name->val, len + 1, "load::%s", filename);
 
   BEGIN_PROFILING(&hp_globals.entries, func_name, hp_profile_flag);
-  ret = _zend_compile_file(file_handle, type TSRMLS_CC);
+  ret = _zend_compile_file(file_handle, type);
   if (hp_globals.entries) {
     END_PROFILING(&hp_globals.entries, hp_profile_flag);
   }
@@ -1187,13 +1170,13 @@ ZEND_DLEXPORT zend_op_array* hp_compile_file(zend_file_handle *file_handle,
  * It replaces all the functions like zend_execute, zend_execute_internal,
  * etc that needs to be instrumented with their corresponding proxies.
  */
-static void hp_begin(long xhprof_flags TSRMLS_DC) {
+static void hp_begin(long xhprof_flags) {
   if (!hp_globals.enabled) {
     int hp_profile_flag = 1;
 
     hp_globals.enabled      = 1;
     hp_globals.xhprof_flags = (uint32)xhprof_flags;
-    hp_init_profiler_state(TSRMLS_CC);
+    hp_init_profiler_state();
     
     BEGIN_PROFILING(&hp_globals.entries, zend_string_init(ROOT_SYMBOL, sizeof(ROOT_SYMBOL) - 1, 1), hp_profile_flag);
     return;
@@ -1217,7 +1200,7 @@ static void hp_begin(long xhprof_flags TSRMLS_DC) {
 
 
     /* one time initializations */
-    hp_init_profiler_state(TSRMLS_CC);
+    hp_init_profiler_state();
 
     /* start profiling from fictitious main() */
     BEGIN_PROFILING(&hp_globals.entries, zend_string_init(ROOT_SYMBOL, sizeof(ROOT_SYMBOL) - 1, 1), hp_profile_flag);
@@ -1227,7 +1210,7 @@ static void hp_begin(long xhprof_flags TSRMLS_DC) {
 /**
  * Called at request shutdown time. Cleans the profiler's global state.
  */
-static void hp_end(TSRMLS_D) {
+static void hp_end() {
   /* Bail if not ever enabled */
   if (!hp_globals.ever_enabled) {
     return;
@@ -1235,18 +1218,18 @@ static void hp_end(TSRMLS_D) {
 
   /* Stop profiler if enabled */
   if (hp_globals.enabled) {
-    hp_stop(TSRMLS_C);
+    hp_stop();
   }
 
   /* Clean up state */
-  hp_clean_profiler_state(TSRMLS_C);
+  hp_clean_profiler_state();
 }
 
 /**
  * Called from xhprof_disable(). Removes all the proxies setup by
  * hp_begin() and restores the original values.
  */
-static void hp_stop(TSRMLS_D) {
+static void hp_stop() {
   int   hp_profile_flag = 1;
 
   /* End any unfinished calls */
