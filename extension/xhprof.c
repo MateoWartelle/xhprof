@@ -48,12 +48,7 @@
 /* Size of a temp scratch buffer            */
 #define SCRATCH_BUF_LEN            512
 
-/* Various XHPROF modes. If you are adding a new mode, register the appropriate
- * callbacks in hp_begin() */
-#define XHPROF_MODE_HIERARCHICAL            1
-#define XHPROF_MODE_SAMPLED            620002      /* Rockfort's zip code */
-
-/* Hierarchical profiling flags.
+/* Profiling flags.
  *
  * Note: Function call counts and wall (elapsed) time are always profiled.
  * The following optional flags can be used to control other aspects of
@@ -77,10 +72,6 @@ typedef unsigned int uint32;
 #if !defined(uint8)
 typedef unsigned char uint8;
 #endif
-
-
-
-
 
 
 /**
@@ -107,21 +98,6 @@ typedef struct hp_entry_t {
   uint8                   hash_code;     /* hash_code for the function name  */
 } hp_entry_t;
 
-/* Various types for XHPROF callbacks       */
-typedef void (*hp_init_cb)           (TSRMLS_D);
-typedef void (*hp_exit_cb)           (TSRMLS_D);
-typedef void (*hp_begin_function_cb) (hp_entry_t **entries,
-                                      hp_entry_t *current   TSRMLS_DC);
-typedef void (*hp_end_function_cb)   (hp_entry_t **entries  TSRMLS_DC);
-
-/* Struct to hold the various callbacks for a single xhprof mode */
-typedef struct hp_mode_cb {
-  hp_init_cb             init_cb;
-  hp_exit_cb             exit_cb;
-  hp_begin_function_cb   begin_fn_cb;
-  hp_end_function_cb     end_fn_cb;
-} hp_mode_cb;
-
 /* Xhprof's global state.
  *
  * This structure is instantiated once.  Initialize defaults for attributes in
@@ -140,17 +116,11 @@ typedef struct hp_global_t {
   /* Holds all the xhprof statistics */
   zval            *stats_count;
 
-  /* Indicates the current xhprof mode or level */
-  int              profiler_level;
-
   /* Top of the profile stack */
   hp_entry_t      *entries;
 
   /* freelist of hp_entry_t chunks for reuse... */
   hp_entry_t      *entry_free_list;
-
-  /* Callbacks for various xhprof modes */
-  hp_mode_cb       mode_cb;
 
   /*       ----------   Mode specific attributes:  -----------       */
 
@@ -184,20 +154,11 @@ static zend_op_array * (*_zend_compile_file) (zend_file_handle *file_handle,
 #define INDEX_2_BYTE(index)  (index >> 3)
 #define INDEX_2_BIT(index)   (1 << (index & 0x7));
 
-
 /**
  * ***************************
  * XHPROF DUMMY CALLBACKS
  * ***************************
  */
-void hp_mode_dummy_init_cb(TSRMLS_D);
-
-void hp_mode_dummy_exit_cb(TSRMLS_D);
-
-void hp_mode_dummy_beginfn_cb(hp_entry_t **entries,
-                              hp_entry_t *current  TSRMLS_DC);
-
-void hp_mode_dummy_endfn_cb(hp_entry_t **entries   TSRMLS_DC);
 
 /* Pointer to the original execute function */
 static void (*_zend_execute_ex) (zend_execute_data *execute_data TSRMLS_DC);
@@ -217,7 +178,7 @@ ZEND_DLEXPORT zend_op_array* hp_compile_file(zend_file_handle *file_handle, int 
  */
 static void hp_register_constants(INIT_FUNC_ARGS);
 
-static void hp_begin(long level, long xhprof_flags TSRMLS_DC);
+static void hp_begin(long xhprof_flags TSRMLS_DC);
 static void hp_stop(TSRMLS_D);
 static void hp_end(TSRMLS_D);
 
@@ -295,9 +256,9 @@ ZEND_GET_MODULE(xhprof)
  */
 
 /**
- * Start XHProf profiling in hierarchical mode.
+ * Start XHProf profiling
  *
- * @param  long $flags  flags for hierarchical mode
+ * @param  long $flags  flags
  * @return void
  * @author kannan
  */
@@ -310,12 +271,11 @@ PHP_FUNCTION(xhprof_enable) {
     return;
   }
 
-  hp_begin(XHPROF_MODE_HIERARCHICAL, xhprof_flags TSRMLS_CC);
+  hp_begin(xhprof_flags TSRMLS_CC);
 }
 
 /**
- * Stops XHProf from profiling in hierarchical mode anymore and returns the
- * profile info.
+ * Stops XHProf from profiling anymore and returns the profile info.
  *
  * @param  void
  * @return array  hash-array of XHProf's profile info
@@ -347,13 +307,6 @@ PHP_MINIT_FUNCTION(xhprof) {
 
   /* no free hp_entry_t structures to start with */
   hp_globals.entry_free_list = NULL;
-
-  /* Initialize with the dummy mode first Having these dummy callbacks saves
-   * us from checking if any of the callbacks are NULL everywhere. */
-  hp_globals.mode_cb.init_cb     = hp_mode_dummy_init_cb;
-  hp_globals.mode_cb.exit_cb     = hp_mode_dummy_exit_cb;
-  hp_globals.mode_cb.begin_fn_cb = hp_mode_dummy_beginfn_cb;
-  hp_globals.mode_cb.end_fn_cb   = hp_mode_dummy_endfn_cb;
 
   for (i = 0; i < 256; i++) {
     hp_globals.func_hash_counters[i] = 0;
@@ -499,13 +452,12 @@ int hp_ignored_functions_filter_collision(uint8 hash) {
  *
  * @author kannan, veeve
  */
-void hp_init_profiler_state(int level TSRMLS_DC) {
+void hp_init_profiler_state(TSRMLS_DC) {
   /* Setup globals */
   if (!hp_globals.ever_enabled) {
     hp_globals.ever_enabled  = 1;
     hp_globals.entries = NULL;
   }
-  hp_globals.profiler_level  = (int) level;
 
   /* Init stats_count */
   if (hp_globals.stats_count) {
@@ -515,9 +467,6 @@ void hp_init_profiler_state(int level TSRMLS_DC) {
   
   hp_globals.stats_count = (zval *)emalloc(sizeof(zval));
   array_init(hp_globals.stats_count);
-
-  /* Call current mode's init cb */
-  hp_globals.mode_cb.init_cb(TSRMLS_C);
 
   /* Set up filter of functions which may be ignored during profiling */
   hp_ignored_functions_filter_init();
@@ -529,9 +478,6 @@ void hp_init_profiler_state(int level TSRMLS_DC) {
  * @author kannan, veeve
  */
 void hp_clean_profiler_state(TSRMLS_D) {
-  /* Call current mode's exit cb */
-  hp_globals.mode_cb.exit_cb(TSRMLS_C);
-
   /* Clear globals */
   if (hp_globals.stats_count) {
     //Z_DELREF_P(hp_globals.stats_count);
@@ -541,7 +487,6 @@ void hp_clean_profiler_state(TSRMLS_D) {
     hp_globals.stats_count = NULL;
   }
   hp_globals.entries = NULL;
-  hp_globals.profiler_level = 1;
   hp_globals.ever_enabled = 0;
 
   hp_globals.ignored_function_names = NULL;
@@ -558,8 +503,8 @@ void hp_clean_profiler_state(TSRMLS_D) {
 #define BEGIN_PROFILING(entries, symbol, profile_curr)                  \
   do {                                                                  \
     /* Use a hash code to filter most of the string comparisons. */     \
-    uint8 hash_code  = hp_inline_hash(symbol->val);                          \
-    profile_curr = !hp_ignore_entry(hash_code, symbol->val);                 \
+    uint8 hash_code  = hp_inline_hash(symbol->val);                     \
+    profile_curr = !hp_ignore_entry(hash_code, symbol->val);            \
     if (profile_curr) {                                                 \
       hp_entry_t *cur_entry = hp_fast_alloc_hprof_entry();              \
       (cur_entry)->hash_code = hash_code;                               \
@@ -568,7 +513,7 @@ void hp_clean_profiler_state(TSRMLS_D) {
       /* Call the universal callback */                                 \
       hp_mode_common_beginfn((entries), (cur_entry) TSRMLS_CC);         \
       /* Call the mode's beginfn callback */                            \
-      hp_globals.mode_cb.begin_fn_cb((entries), (cur_entry) TSRMLS_CC); \
+      hp_mode_beginfn_cb((entries), (cur_entry) TSRMLS_CC);             \
       /* Update entries linked list */                                  \
       (*(entries)) = (cur_entry);                                       \
     }                                                                   \
@@ -587,10 +532,10 @@ void hp_clean_profiler_state(TSRMLS_D) {
     if (profile_curr) {                                                 \
       hp_entry_t *cur_entry;                                            \
       /* Call the mode's endfn callback. */                             \
-      /* NOTE(cjiang): we want to call this 'end_fn_cb' before */       \
+      /* NOTE(cjiang): we want to call this 'endfn_cb' before */        \
       /* 'hp_mode_common_endfn' to avoid including the time in */       \
       /* 'hp_mode_common_endfn' in the profiling results.      */       \
-      hp_globals.mode_cb.end_fn_cb((entries) TSRMLS_CC);                \
+      hp_mode_endfn_cb((entries) TSRMLS_CC);                            \
       cur_entry = (*(entries));                                         \
       /* Call the universal callback */                                 \
       hp_mode_common_endfn((entries), (cur_entry) TSRMLS_CC);           \
@@ -917,23 +862,6 @@ static long get_us_interval(struct timeval *start, struct timeval *end) {
 }
 
 /**
- * ***************************
- * XHPROF DUMMY CALLBACKS
- * ***************************
- */
-void hp_mode_dummy_init_cb(TSRMLS_D) { }
-
-
-void hp_mode_dummy_exit_cb(TSRMLS_D) { }
-
-
-void hp_mode_dummy_beginfn_cb(hp_entry_t **entries,
-                              hp_entry_t *current  TSRMLS_DC) { }
-
-void hp_mode_dummy_endfn_cb(hp_entry_t **entries   TSRMLS_DC) { }
-
-
-/**
  * ****************************
  * XHPROF COMMON CALLBACKS
  * ****************************
@@ -991,11 +919,11 @@ void hp_mode_common_endfn(hp_entry_t **entries, hp_entry_t *current TSRMLS_DC) {
  */
 
 /**
- * XHPROF_MODE_HIERARCHICAL's begin function callback
+ * begin function callback
  *
  * @author kannan
  */
-void hp_mode_hier_beginfn_cb(hp_entry_t **entries,
+void hp_mode_beginfn_cb(hp_entry_t **entries,
                              hp_entry_t  *current  TSRMLS_DC) {
   current->timer_start = cycle_timer();
 
@@ -1019,11 +947,11 @@ void hp_mode_hier_beginfn_cb(hp_entry_t **entries,
  */
 
 /**
- * XHPROF_MODE_HIERARCHICAL's end function callback
+ * end function callback
  *
  * @author kannan
  */
-void hp_mode_hier_endfn_cb(hp_entry_t **entries  TSRMLS_DC) {
+void hp_mode_endfn_cb(hp_entry_t **entries  TSRMLS_DC) {
   hp_entry_t   *top = (*entries);
   //zval            *counts;
   struct rusage    ru_end;
@@ -1259,22 +1187,14 @@ ZEND_DLEXPORT zend_op_array* hp_compile_file(zend_file_handle *file_handle,
  * It replaces all the functions like zend_execute, zend_execute_internal,
  * etc that needs to be instrumented with their corresponding proxies.
  */
-static void hp_begin(long level, long xhprof_flags TSRMLS_DC) {
+static void hp_begin(long xhprof_flags TSRMLS_DC) {
   if (!hp_globals.enabled) {
     int hp_profile_flag = 1;
 
     hp_globals.enabled      = 1;
     hp_globals.xhprof_flags = (uint32)xhprof_flags;
-    hp_init_profiler_state(level TSRMLS_CC);
+    hp_init_profiler_state(TSRMLS_CC);
     
-    /* Register the appropriate callback functions Override just a subset of
-     * all the callbacks is OK. */
-    switch(level) {
-      case XHPROF_MODE_HIERARCHICAL:
-        hp_globals.mode_cb.begin_fn_cb = hp_mode_hier_beginfn_cb;
-        hp_globals.mode_cb.end_fn_cb   = hp_mode_hier_endfn_cb;
-        break;
-    }
     BEGIN_PROFILING(&hp_globals.entries, zend_string_init(ROOT_SYMBOL, sizeof(ROOT_SYMBOL) - 1, 1), hp_profile_flag);
     return;
 	
@@ -1297,7 +1217,7 @@ static void hp_begin(long level, long xhprof_flags TSRMLS_DC) {
 
 
     /* one time initializations */
-    hp_init_profiler_state(level TSRMLS_CC);
+    hp_init_profiler_state(TSRMLS_CC);
 
     /* start profiling from fictitious main() */
     BEGIN_PROFILING(&hp_globals.entries, zend_string_init(ROOT_SYMBOL, sizeof(ROOT_SYMBOL) - 1, 1), hp_profile_flag);
