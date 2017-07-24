@@ -244,9 +244,6 @@ static hp_global_t       hp_globals;
 static zend_op_array * (*_zend_compile_file) (zend_file_handle *file_handle,
                                               int type TSRMLS_DC);
 
-/* Pointer to the original compile string function (used by eval) */
-static zend_op_array * (*_zend_compile_string) (zval *source_string, char *filename TSRMLS_DC);
-
 /* Bloom filter for function names to be ignored */
 #define INDEX_2_BYTE(index)  (index >> 3)
 #define INDEX_2_BIT(index)   (1 << (index & 0x7));
@@ -298,16 +295,8 @@ static void hp_fast_free_hprof_entry(hp_entry_t *p);
 static inline uint8 hp_inline_hash(char * str);
 static void get_all_cpu_frequencies();
 static long get_us_interval(struct timeval *start, struct timeval *end);
-static void incr_us_interval(struct timeval *start, uint64 incr);
 
-static void hp_get_ignored_functions_from_arg(zval *args);
-static void hp_ignored_functions_filter_clear();
 static void hp_ignored_functions_filter_init();
-
-static inline zval  *hp_zval_at_key(char  *key,
-                                    zval  *values);
-static inline char **hp_strings_in_zval(zval  *values);
-static inline void   hp_array_del(char **name_array);
 
 /* {{{ arginfo */
 ZEND_BEGIN_ARG_INFO_EX(arginfo_xhprof_enable, 0, 0, 0)
@@ -396,8 +385,6 @@ PHP_FUNCTION(xhprof_enable) {
     return;
   }
 
-  //hp_get_ignored_functions_from_arg(optional_array);
-
   hp_begin(XHPROF_MODE_HIERARCHICAL, xhprof_flags TSRMLS_CC);
 }
 
@@ -464,8 +451,6 @@ PHP_MINIT_FUNCTION(xhprof) {
     hp_globals.func_hash_counters[i] = 0;
   }
 
-  hp_ignored_functions_filter_clear();
-
 #if defined(DEBUG)
   /* To make it random number generator repeatable to ease testing. */
   srand(0);
@@ -496,10 +481,6 @@ PHP_RINIT_FUNCTION(xhprof) {
  
   _zend_compile_file = zend_compile_file;
   zend_compile_file  = hp_compile_file;
-
-  /* Replace zend_compile_string with our proxy */
-  //_zend_compile_string = zend_compile_string;
-  //zend_compile_string = hp_compile_string;
 
   /* Replace zend_execute with our proxy */
   _zend_execute_ex = zend_execute_ex;
@@ -602,37 +583,6 @@ static inline uint8 hp_inline_hash(char * str) {
 }
 
 /**
- * Parse the list of ignored functions from the zval argument.
- *
- * @author mpal
- */
-static void hp_get_ignored_functions_from_arg(zval *args) {
-//
-//  if (hp_globals.ignored_function_names) {
-//    hp_array_del(hp_globals.ignored_function_names);
-//  }
-//
-//  if (args != NULL) {
-//    zval  *zresult = NULL;
-//
-//    zresult = hp_zval_at_key("ignored_functions", args);
-//    hp_globals.ignored_function_names = hp_strings_in_zval(zresult);
-//  } else {
-//    hp_globals.ignored_function_names = NULL;
-//  }
-}
-
-/**
- * Clear filter for functions which may be ignored during profiling.
- *
- * @author mpal
- */
-static void hp_ignored_functions_filter_clear() {
-//  memset(hp_globals.ignored_function_filter, 0,
-//         XHPROF_IGNORED_FUNCTION_FILTER_SIZE);
-}
-
-/**
  * Initialize filter for ignored functions using bit vector.
  *
  * @author mpal
@@ -720,8 +670,6 @@ void hp_clean_profiler_state(TSRMLS_D) {
   hp_globals.profiler_level = 1;
   hp_globals.ever_enabled = 0;
 
-  /* Delete the array storing ignored function names */
-  //hp_array_del(hp_globals.ignored_function_names);
   hp_globals.ignored_function_names = NULL;
 }
 
@@ -1121,16 +1069,6 @@ int bind_to_cpu(uint32 cpu_id) {
 static long get_us_interval(struct timeval *start, struct timeval *end) {
   return (((end->tv_sec - start->tv_sec) * 1000000)
           + (end->tv_usec - start->tv_usec));
-}
-
-/**
- * Incr time with the given microseconds.
- */
-static void incr_us_interval(struct timeval *start, uint64 incr) {
-  incr += (start->tv_sec * 1000000 + start->tv_usec);
-  start->tv_sec  = incr/1000000;
-  start->tv_usec = incr%1000000;
-  return;
 }
 
 /**
@@ -1606,30 +1544,6 @@ ZEND_DLEXPORT zend_op_array* hp_compile_file(zend_file_handle *file_handle,
 }
 
 /**
- * Proxy for zend_compile_string(). Used to profile PHP eval compilation time.
- */
-ZEND_DLEXPORT zend_op_array* hp_compile_string(zval *source_string, char *filename TSRMLS_DC) {
-
-    /*char          *func;
-    int            len;
-    zend_op_array *ret;
-    int            hp_profile_flag = 1;
-
-    len  = strlen("eval") + strlen(filename) + 3;
-    func = (char *)emalloc(len);
-    snprintf(func, len, "eval::%s", filename);
-
-    BEGIN_PROFILING(&hp_globals.entries, func, hp_profile_flag);
-    ret = _zend_compile_string(source_string, filename TSRMLS_CC);
-    if (hp_globals.entries) {
-        END_PROFILING(&hp_globals.entries, hp_profile_flag);
-    }
-
-    efree(func);
-    return ret;*/
-}
-
-/**
  * **************************
  * MAIN XHPROF CALLBACKS
  * **************************
@@ -1662,10 +1576,6 @@ static void hp_begin(long level, long xhprof_flags TSRMLS_DC) {
     /* Replace zend_compile_file with our proxy */
     _zend_compile_file = zend_compile_file;
     zend_compile_file  = hp_compile_file;
-
-    /* Replace zend_compile_string with our proxy */
-    _zend_compile_string = zend_compile_string;
-    zend_compile_string = hp_compile_string;
 
     /* Replace zend_execute with our proxy */
     _zend_execute_ex = zend_execute_ex;
@@ -1719,125 +1629,9 @@ static void hp_stop(TSRMLS_D) {
     END_PROFILING(&hp_globals.entries, hp_profile_flag);
   }
     
-  /* We have done this in RSHUT */
-  //zend_execute_ex       = _zend_execute_ex;
-  //zend_execute_internal = _zend_execute_internal;
-  //
-  ///* Remove proxies, restore the originals */
-  //zend_compile_file     = _zend_compile_file;
-  //zend_compile_string   = _zend_compile_string;
-
   /* Resore cpu affinity. */
   restore_cpu_affinity(&hp_globals.prev_mask);
 
   /* Stop profiling */
   hp_globals.enabled = 0;
-}
-
-
-/**
- * *****************************
- * XHPROF ZVAL UTILITY FUNCTIONS
- * *****************************
- */
-
-/** Look in the PHP assoc array to find a key and return the zval associated
- *  with it.
- *
- *  @author mpal
- **/
-static zval *hp_zval_at_key(char  *key,
-                            zval  *values) {
-//  zval *result = NULL;
-//
-//  if (Z_TYPE_P(values) == IS_ARRAY) {
-//    HashTable *ht;
-//    zval     **value;
-//    uint       len = strlen(key) + 1;
-//
-//    ht = Z_ARRVAL_P(values);
-//    if (zend_hash_find(ht, zend_string_init(key, len, 0)) == SUCCESS) {
-//      result = *value;
-//    }
-//  } else {
-//    result = NULL;
-//  }
-//
-//  return result;
-}
-
-/** Convert the PHP array of strings to an emalloced array of strings. Note,
- *  this method duplicates the string data in the PHP array.
- *
- *  @author mpal
- **/
-static char **hp_strings_in_zval(zval  *values) {
-//  char   **result;
-//  size_t   count;
-//  size_t   ix = 0;
-//
-//  if (!values) {
-//    return NULL;
-//  }
-//
-//  if (Z_TYPE_P(values) == IS_ARRAY) {
-//    HashTable *ht;
-//
-//    ht    = Z_ARRVAL_P(values);
-//    count = zend_hash_num_elements(ht);
-//
-//    if((result =
-//         (char**)emalloc(sizeof(char*) * (count + 1))) == NULL) {
-//      return result;
-//    }
-//
-//    for (zend_hash_internal_pointer_reset(ht);
-//         zend_hash_has_more_elements(ht) == SUCCESS;
-//         zend_hash_move_forward(ht)) {
-//      //char  *str;
-//      //uint   len;
-//      zend_string *key;
-//
-//      ulong  idx;
-//      int    type;
-//      zval **data;
-//      
-//      type = zend_hash_get_current_key_ex(ht, &key, &idx, NULL);
-//      /* Get the names stored in a standard array */
-//      if(type == HASH_KEY_IS_LONG) {
-//        if ((data = zend_hash_get_current_data(ht) != NULL) &&
-//            Z_TYPE_PP(data) == IS_STRING &&
-//            strcmp(ZSTR_VAL((*data)->value.str), ROOT_SYMBOL)) { /* do not ignore "main" */
-//          result[ix] = estrdup(Z_STRVAL_PP(data));
-//          ix++;
-//        }
-//      }
-//    }
-//  } else if(Z_TYPE_P(values) == IS_STRING) {
-//    if((result = (char**)emalloc(sizeof(char*) * 2)) == NULL) {
-//      return result;
-//    }
-//    result[0] = estrdup(Z_STRVAL_P(values));
-//    ix = 1;
-//  } else {
-//    result = NULL;
-//  }
-//
-//  /* NULL terminate the array */
-//  if (result != NULL) {
-//    result[ix] = NULL;
-//  }
-//
-//  return result;
-}
-
-/* Free this memory at the end of profiling */
-static inline void hp_array_del(char **name_array) {
-//  if (name_array != NULL) {
-//    int i = 0;
-//    for(; name_array[i] != NULL && i < XHPROF_MAX_IGNORED_FUNCTIONS; i++) {
-//      efree(name_array[i]);
-//    }
-//    efree(name_array);
-//  }
 }
