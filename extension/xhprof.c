@@ -1019,23 +1019,36 @@ void hp_mode_hier_beginfn_cb(hp_entry_t **entries,
  */
 
 /**
- * XHPROF shared end function callback
+ * XHPROF_MODE_HIERARCHICAL's end function callback
  *
  * @author kannan
  */
-zval * hp_mode_shared_endfn_cb(hp_entry_t *top,
-                               zend_string          *symbol  TSRMLS_DC) {
+void hp_mode_hier_endfn_cb(hp_entry_t **entries  TSRMLS_DC) {
+  hp_entry_t   *top = (*entries);
+  //zval            *counts;
+  struct rusage    ru_end;
+  zend_string      *symbol;
+  long int         mu_end;
+  long int         pmu_end;
+
+  /********/
   zval counts;
   zval *countsp;
   uint64 timer_end;
   HashTable *ht;
+
+  /* Get the stat array */
+  symbol = zend_string_alloc(SCRATCH_BUF_LEN, 0);
+  ZSTR_VAL(symbol)[0] = '\000';
+  hp_get_function_stack(top, 2, symbol);
 
   timer_end = cycle_timer();
 
   /* Get the stat array */
   /* Bail if something is goofy */
   if (!hp_globals.stats_count || !(ht = HASH_OF(hp_globals.stats_count))) {
-    return (zval *) 0;
+    efree(symbol);
+    return;
   }
 
   /* Lookup our hash table */
@@ -1050,31 +1063,7 @@ zval * hp_mode_shared_endfn_cb(hp_entry_t *top,
   hp_inc_count(countsp, zend_string_init("ct", sizeof("ct") - 1, 1), 1  TSRMLS_CC);
 
   hp_inc_count(countsp, zend_string_init("wt", sizeof("wt") - 1, 1), timer_end - top->timer_start);
-  return countsp;
-}
 
-/**
- * XHPROF_MODE_HIERARCHICAL's end function callback
- *
- * @author kannan
- */
-void hp_mode_hier_endfn_cb(hp_entry_t **entries  TSRMLS_DC) {
-  hp_entry_t   *top = (*entries);
-  zval            *counts;
-  struct rusage    ru_end;
-  zend_string      *symbol;
-  long int         mu_end;
-  long int         pmu_end;
-
-  /* Get the stat array */
-  symbol = zend_string_alloc(SCRATCH_BUF_LEN, 0);
-  ZSTR_VAL(symbol)[0] = '\000';
-  hp_get_function_stack(top, 2, symbol);
-  if (!(counts = hp_mode_shared_endfn_cb(top,
-                                         symbol  TSRMLS_CC))) {
-    efree(symbol);
-    return;
-  }
   zend_string_free(symbol);
   return;
   if (hp_globals.xhprof_flags & XHPROF_FLAGS_CPU) {
@@ -1082,7 +1071,7 @@ void hp_mode_hier_endfn_cb(hp_entry_t **entries  TSRMLS_DC) {
     getrusage(RUSAGE_SELF, &ru_end);
 
     /* Bump CPU stats in the counts hashtable */
-    hp_inc_count(counts, zend_string_init("cpu", sizeof("cpu") - 1, 1), (get_us_interval(&(top->ru_start_hprof.ru_utime),
+    hp_inc_count(countsp, zend_string_init("cpu", sizeof("cpu") - 1, 1), (get_us_interval(&(top->ru_start_hprof.ru_utime),
                                               &(ru_end.ru_utime)) +
                               get_us_interval(&(top->ru_start_hprof.ru_stime),
                                               &(ru_end.ru_stime)))
@@ -1096,8 +1085,8 @@ void hp_mode_hier_endfn_cb(hp_entry_t **entries  TSRMLS_DC) {
 
     /* Bump Memory stats in the counts hashtable */
 
-    hp_inc_count(counts, zend_string_init("mu", sizeof("mu") - 1, 1),  mu_end - top->mu_start_hprof    TSRMLS_CC);
-    hp_inc_count(counts, zend_string_init("pmu", sizeof("pmu") - 1, 1), pmu_end - top->pmu_start_hprof  TSRMLS_CC);
+    hp_inc_count(countsp, zend_string_init("mu", sizeof("mu") - 1, 1),  mu_end - top->mu_start_hprof    TSRMLS_CC);
+    hp_inc_count(countsp, zend_string_init("pmu", sizeof("pmu") - 1, 1), pmu_end - top->pmu_start_hprof  TSRMLS_CC);
   }
 
 }
