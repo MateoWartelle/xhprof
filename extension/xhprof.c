@@ -216,9 +216,7 @@ zend_function_entry xhprof_functions[] = {
 
 /* Callback functions for the xhprof extension */
 zend_module_entry xhprof_module_entry = {
-#if ZEND_MODULE_API_NO >= 20010901
   STANDARD_MODULE_HEADER,
-#endif
   "xhprof",                        /* Name of the extension */
   xhprof_functions,                /* List of functions exposed */
   PHP_MINIT(xhprof),               /* Module init callback */
@@ -226,9 +224,7 @@ zend_module_entry xhprof_module_entry = {
   PHP_RINIT(xhprof),               /* Request init callback */
   PHP_RSHUTDOWN(xhprof),           /* Request shutdown callback */
   PHP_MINFO(xhprof),               /* Module info callback */
-#if ZEND_MODULE_API_NO >= 20010901
   XHPROF_VERSION,
-#endif
   STANDARD_MODULE_PROPERTIES
 };
 
@@ -286,8 +282,6 @@ PHP_FUNCTION(xhprof_disable) {
   }
   /* else null is returned */
 }
-
-
 
 /**
  * Module init callback.
@@ -371,7 +365,6 @@ PHP_MINFO_FUNCTION(xhprof)
 
   php_info_print_table_end();
 }
-
 
 /**
  * ***************************************************
@@ -459,7 +452,6 @@ void hp_init_profiler_state() {
 
   /* Init stats_count */
   if (hp_globals.stats_count) {
-    //zval_dtor(hp_globals.stats_count);
     efree(hp_globals.stats_count);
   }
   
@@ -478,9 +470,7 @@ void hp_init_profiler_state() {
 void hp_clean_profiler_state() {
   /* Clear globals */
   if (hp_globals.stats_count) {
-    //Z_DELREF_P(hp_globals.stats_count);
 	zval_ptr_dtor(hp_globals.stats_count);
-	//zend_array_destroy(Z_ARRVAL_P(hp_globals.stats_count));
     efree(hp_globals.stats_count);
     hp_globals.stats_count = NULL;
   }
@@ -569,7 +559,6 @@ size_t hp_get_entry_name(hp_entry_t  *entry,
   }
 
   /* Force null-termination at MAX */
-//  result_buf[result_len - 1] = 0;
   result->val[result->len - 1] = 0;
   return strlen(result->val);
 }
@@ -757,71 +746,9 @@ void hp_inc_count(zval *counts, zend_string *name, long count) {
   if ((data = zend_hash_find(ht, name)) != NULL) {
     ZVAL_LONG(data, Z_LVAL_P(data) + count);
   } else {
-     
-    //ZVAL_LONG(data, count);
-    //zend_hash_update(ht, name, data);
-
     add_assoc_long(counts, name->val, count);
   }
 }
-
-/**
- * Looksup the hash table for the given symbol
- * Initializes a new array() if symbol is not present
- *
- * @author kannan, veeve
- */
-//zval * hp_hash_lookup(zend_string *symbol) {
-//  HashTable   *ht;
-//  zval        *data;
-//  zval        counts;
-//
-//  /* Bail if something is goofy */
-//  if (!hp_globals.stats_count || !(ht = HASH_OF(hp_globals.stats_count))) {
-//    return (zval *) 0;
-//  }
-//
-//  /* Lookup our hash table */
-//  //zend_hash_str_find
-//  if ((data = zend_hash_str_find(ht, symbol->val, strlen(symbol->val))) != NULL) {
-//    /* Symbol already exists */
-//    counts = data;
-//  }
-//  else {
-//    /* Add symbol to hash table */
-//   // MAKE_STD_ZVAL(counts);
-//    //counts = (zval *)emalloc(sizeof(zval));
-//    array_init(&counts);
-//    add_assoc_zval(hp_globals.stats_count, symbol->val, &counts);
-//  }
-//  
-//  return (counts);
-//}
-
-/**
- * Truncates the given timeval to the nearest slot begin, where
- * the slot size is determined by intr
- *
- * @param  tv       Input timeval to be truncated in place
- * @param  intr     Time interval in microsecs - slot width
- * @return void
- * @author veeve
- */
-void hp_trunc_time(struct timeval *tv,
-                   uint64          intr) {
-  uint64 time_in_micro;
-
-  /* Convert to microsecs and trunc that first */
-  time_in_micro = (tv->tv_sec * 1000000) + tv->tv_usec;
-  time_in_micro /= intr;
-  time_in_micro *= intr;
-
-  /* Update tv */
-  tv->tv_sec  = (time_in_micro / 1000000);
-  tv->tv_usec = (time_in_micro % 1000000);
-}
-
-
 
 /**
  * ***********************
@@ -925,7 +852,6 @@ void hp_mode_beginfn_cb(hp_entry_t **entries, hp_entry_t  *current) {
   }
 }
 
-
 /**
  * **********************************
  * XHPROF END FUNCTION CALLBACKS
@@ -939,7 +865,6 @@ void hp_mode_beginfn_cb(hp_entry_t **entries, hp_entry_t  *current) {
  */
 void hp_mode_endfn_cb(hp_entry_t **entries) {
   hp_entry_t   *top = (*entries);
-  //zval            *counts;
   struct rusage    ru_end;
   zend_string      *symbol;
   long int         mu_end;
@@ -1076,8 +1001,6 @@ ZEND_DLEXPORT void hp_execute_ex (zend_execute_data *execute_data) {
  * @author hzhao, kannan, Jason
  */
 
-
-
 ZEND_DLEXPORT void hp_execute_internal(zend_execute_data *execute_data, zval *ret) {
   zend_execute_data *current_data;
   zend_string   *func = NULL;
@@ -1109,7 +1032,6 @@ ZEND_DLEXPORT void hp_execute_internal(zend_execute_data *execute_data, zval *re
   if (!_zend_execute_internal) {
     /* no old override to begin with. so invoke the builtin's implementation  */
 
-    //zend_op *opline = EX(opline);
     execute_data ->func ->internal_function.handler(execute_data, ret);
   
   } else {
@@ -1121,7 +1043,6 @@ ZEND_DLEXPORT void hp_execute_internal(zend_execute_data *execute_data, zval *re
     if (hp_globals.entries) {
       END_PROFILING(&hp_globals.entries, hp_profile_flag);
     }
-    //zend_string_free(func);
   }
 
   if (func) {
@@ -1178,31 +1099,6 @@ static void hp_begin(long xhprof_flags) {
     hp_globals.xhprof_flags = (uint32)xhprof_flags;
     hp_init_profiler_state();
     
-    BEGIN_PROFILING(&hp_globals.entries, zend_string_init(ROOT_SYMBOL, sizeof(ROOT_SYMBOL) - 1, 1), hp_profile_flag);
-    return;
-	
-    /* Replace zend_compile_file with our proxy */
-    _zend_compile_file = zend_compile_file;
-    zend_compile_file  = hp_compile_file;
-
-    /* Replace zend_execute with our proxy */
-    _zend_execute_ex = zend_execute_ex;
-    zend_execute_ex  = hp_execute_ex;
-
-    /* Replace zend_execute_internal with our proxy */
-    _zend_execute_internal = zend_execute_internal;
-    if (!(hp_globals.xhprof_flags & XHPROF_FLAGS_NO_BUILTINS)) {
-      /* if NO_BUILTINS is not set (i.e. user wants to profile builtins),
-       * then we intercept internal (builtin) function calls.
-       */
-      zend_execute_internal = hp_execute_internal;
-    }
-
-
-    /* one time initializations */
-    hp_init_profiler_state();
-
-    /* start profiling from fictitious main() */
     BEGIN_PROFILING(&hp_globals.entries, zend_string_init(ROOT_SYMBOL, sizeof(ROOT_SYMBOL) - 1, 1), hp_profile_flag);
   }
 }
