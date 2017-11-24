@@ -42,16 +42,11 @@ I am in foo()...
 I am in bar()...
 Test for 'include_once' & 'require_once' operation
 main()                                  : ct=       1; wt=*;
+main()==>bar                            : ct=       1; wt=*;
 main()==>dirname                        : ct=       6; wt=*;
+main()==>explode                        : ct=       2; wt=*;
+main()==>foo                            : ct=       1; wt=*;
+main()==>implode                        : ct=       2; wt=*;
 main()==>load::tests/xhprof_004_inc.php : ct=       1; wt=*;
 main()==>load::tests/xhprof_004_require.php: ct=       1; wt=*;
-main()==>run_init::tests/xhprof_004_inc.php: ct=       1; wt=*;
-main()==>run_init::tests/xhprof_004_require.php: ct=       1; wt=*;
 main()==>xhprof_disable                 : ct=       1; wt=*;
-run_init::tests/xhprof_004_inc.php==>explode: ct=       1; wt=*;
-run_init::tests/xhprof_004_inc.php==>foo: ct=       1; wt=*;
-run_init::tests/xhprof_004_inc.php==>implode: ct=       1; wt=*;
-run_init::tests/xhprof_004_require.php==>bar: ct=       1; wt=*;
-run_init::tests/xhprof_004_require.php==>explode: ct=       1; wt=*;
-run_init::tests/xhprof_004_require.php==>implode: ct=       1; wt=*;
-run_init::tests/xhprof_004_require.php==>strlen: ct=       1; wt=*;
