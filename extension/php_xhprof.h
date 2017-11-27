@@ -38,7 +38,7 @@ extern zend_module_entry xhprof_module_entry;
 #define XHPROF_VERSION "0.9.2"
 
 /* Fictitious function name to represent top of the call tree. The paranthesis
- * in the name is to ensure we don't conflict with user function names.  */
+ * in the name is to ensure we don't conflict with user function names. */
 #define ROOT_SYMBOL "main()"
 
 /* Size of a temp scratch buffer */
@@ -59,7 +59,7 @@ extern zend_module_entry xhprof_module_entry;
 #define XHPROF_FLAGS_MEMORY 0x0004
 
 /* Constant for ignoring functions, transparent to hierarchical profile */
-#define XHPROF_MAX_IGNORED_FUNCTIONS  256
+#define XHPROF_MAX_IGNORED_FUNCTIONS 256
 #define XHPROF_IGNORED_FUNCTION_FILTER_SIZE ((XHPROF_MAX_IGNORED_FUNCTIONS + 7)/8)
 
 #if !defined(uint64)
@@ -89,54 +89,54 @@ PHP_FUNCTION(xhprof_disable);
  * profile operation, recursion depth, and the name of the function being
  * profiled. */
 typedef struct hp_entry_t {
-  /* function name */
-  zend_string *name_hprof;
-  /* recursion level for function */
-  int rlvl_hprof;
-  /* start value for timer */
-  uint64 timer_start;
-  /* memory usage */
-  long int mu_start_hprof;
-  /* peak memory usage */
-  long int pmu_start_hprof;
-  /* user/sys time start */
-  struct rusage ru_start_hprof;
-  /* ptr to prev entry being profiled */
-  struct hp_entry_t *prev_hprof;
-  /* hash_code for the function name */
-  uint8 hash_code;
+    /* function name */
+    zend_string *name_hprof;
+    /* recursion level for function */
+    int rlvl_hprof;
+    /* start value for timer */
+    uint64 timer_start;
+    /* memory usage */
+    long int mu_start_hprof;
+    /* peak memory usage */
+    long int pmu_start_hprof;
+    /* user/sys time start */
+    struct rusage ru_start_hprof;
+    /* ptr to prev entry being profiled */
+    struct hp_entry_t *prev_hprof;
+    /* hash_code for the function name */
+    uint8 hash_code;
 } hp_entry_t;
 
 /* Xhprof's global state. */
 typedef struct hp_global_t {
-  /*       ----------   Global attributes:  -----------       */
+    /*           ----------     Global attributes:  -----------             */
 
-  /* Indicates if xhprof is currently enabled */
-  int enabled;
+    /* Indicates if xhprof is currently enabled */
+    int enabled;
 
-  /* Indicates if xhprof was ever enabled during this request */
-  int ever_enabled;
+    /* Indicates if xhprof was ever enabled during this request */
+    int ever_enabled;
 
-  /* Holds all the xhprof statistics */
-  zval *stats_count;
+    /* Holds all the xhprof statistics */
+    zval *stats_count;
 
-  /* Top of the profile stack */
-  hp_entry_t *entries;
+    /* Top of the profile stack */
+    hp_entry_t *entries;
 
-  /* freelist of hp_entry_t chunks for reuse... */
-  hp_entry_t *entry_free_list;
+    /* freelist of hp_entry_t chunks for reuse... */
+    hp_entry_t *entry_free_list;
 
-  /*       ----------   Mode specific attributes:  -----------       */
+    /*           ----------     Mode specific attributes:  -----------           */
 
-  /* XHProf flags */
-  uint32 xhprof_flags;
+    /* XHProf flags */
+    uint32 xhprof_flags;
 
-  /* counter table indexed by hash value of function names. */
-  uint8  func_hash_counters[256];
+    /* counter table indexed by hash value of function names. */
+    uint8 func_hash_counters[256];
 
-  /* Table of ignored function names and their filter */
-  char  **ignored_function_names;
-  uint8   ignored_function_filter[XHPROF_IGNORED_FUNCTION_FILTER_SIZE];
+    /* Table of ignored function names and their filter */
+    char **ignored_function_names;
+    uint8 ignored_function_filter[XHPROF_IGNORED_FUNCTION_FILTER_SIZE];
 
 } hp_global_t;
 
