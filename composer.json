@@ -1,0 +1,13 @@
+{
+    "name": "patrickallaert/xhprof",
+    "description": "XHProf: A Hierarchical Profiler for PHP",
+    "keywords": ["profiling", "performance"],
+    "homepage": "http://pecl.php.net/package/xhprof",
+    "license": "Apache-2.0",
+    "require": {
+        "php": ">=7.0.0"
+    },
+    "autoload": {
+        "exclude-from-classmap": ["**"]
+    }
+}
