@@ -175,7 +175,7 @@ static inline uint64 cycle_timer();
 static void hp_free_list();
 static hp_entry_t *hp_fast_alloc_hprof_entry();
 static void hp_fast_free_hprof_entry(hp_entry_t *p);
-static inline uint8 hp_inline_hash(char * str);
+static inline uint8 hp_inline_hash(char * str, size_t len);
 static long get_us_interval(struct timeval *start, struct timeval *end);
 
 #endif /* PHP_XHPROF_H */

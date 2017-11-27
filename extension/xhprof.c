@@ -164,44 +164,44 @@ void hp_mode_common_beginfn(hp_entry_t **entries, hp_entry_t *current) {
 /*
  * Start profiling - called just before calling the actual function
  */
-#define BEGIN_PROFILING(entries, symbol, profile_curr)                                  \
-    do {                                                                                                                                    \
-        /* Use a hash code to filter most of the string comparisons. */         \
-        uint8 hash_code = hp_inline_hash(symbol->val);                                          \
-        profile_curr = !hp_ignore_entry(hash_code, symbol->val);                        \
-        if (profile_curr) {                                                                                                 \
-            hp_entry_t *cur_entry = hp_fast_alloc_hprof_entry();                            \
-            (cur_entry)->hash_code = hash_code;                                                             \
-            (cur_entry)->name_hprof = symbol;                                                                   \
-            (cur_entry)->prev_hprof = (*(entries));                                                     \
-            /* Call the universal callback */                                                                   \
-            hp_mode_common_beginfn((entries), (cur_entry));                                     \
-            /* Call the mode's beginfn callback */                                                      \
-            hp_mode_beginfn_cb((entries), (cur_entry));                                             \
-            /* Update entries linked list */                                                                    \
-            (*(entries)) = (cur_entry);                                                                             \
-        } else {                                                                                                                        \
-            zend_string_free(symbol);                                                                                   \
-            symbol = NULL;                                                                                                      \
-        }                                                                                                                                       \
+#define BEGIN_PROFILING(entries, symbol, profile_curr)                    \
+    do {                                                                  \
+        /* Use a hash code to filter most of the string comparisons. */   \
+        uint8 hash_code = hp_inline_hash(symbol->val, symbol->len);       \
+        profile_curr = !hp_ignore_entry(hash_code, symbol->val);          \
+        if (profile_curr) {                                               \
+            hp_entry_t *cur_entry = hp_fast_alloc_hprof_entry();          \
+            (cur_entry)->hash_code = hash_code;                           \
+            (cur_entry)->name_hprof = symbol;                             \
+            (cur_entry)->prev_hprof = (*(entries));                       \
+            /* Call the universal callback */                             \
+            hp_mode_common_beginfn((entries), (cur_entry));               \
+            /* Call the mode's beginfn callback */                        \
+            hp_mode_beginfn_cb((entries), (cur_entry));                   \
+            /* Update entries linked list */                              \
+            (*(entries)) = (cur_entry);                                   \
+        } else {                                                          \
+            zend_string_free(symbol);                                     \
+            symbol = NULL;                                                \
+        }                                                                 \
     } while (0)
 
 /*
  * Stop profiling - called just after calling the actual function
  */
-#define END_PROFILING(entries, profile_curr)                                                        \
-    do {                                                                                                                                    \
-        if (profile_curr) {                                                                                                 \
-            hp_entry_t *cur_entry;                                                                                      \
-            /* Call the mode's endfn callback. */                                                           \
-            hp_mode_endfn_cb((entries));                                                                            \
-            cur_entry = (*(entries));                                                                                   \
-            /* Call the universal callback */                                                                   \
-            hp_globals.func_hash_counters[(cur_entry)->hash_code]--;                    \
-            /* Free top entry and update entries linked list */                             \
-            (*(entries)) = (*(entries))->prev_hprof;                                                    \
-            hp_fast_free_hprof_entry(cur_entry);                                                            \
-        }                                                                                                                                       \
+#define END_PROFILING(entries, profile_curr)                              \
+    do {                                                                  \
+        if (profile_curr) {                                               \
+            hp_entry_t *cur_entry;                                        \
+            /* Call the mode's endfn callback. */                         \
+            hp_mode_endfn_cb((entries));                                  \
+            cur_entry = (*(entries));                                     \
+            /* Call the universal callback */                             \
+            hp_globals.func_hash_counters[(cur_entry)->hash_code]--;      \
+            /* Free top entry and update entries linked list */           \
+            (*(entries)) = (*(entries))->prev_hprof;                      \
+            hp_fast_free_hprof_entry(cur_entry);                          \
+        }                                                                 \
     } while (0)
 
 /**
@@ -252,7 +252,7 @@ PHP_FUNCTION(xhprof_enable) {
             int i = 0;
             for(; hp_globals.ignored_function_names[i] != NULL; i++) {
                 char *str = hp_globals.ignored_function_names[i];
-                uint8 hash = hp_inline_hash(str);
+                uint8 hash = hp_inline_hash(str, strlen(str));
                 int idx = INDEX_2_BYTE(hash);
                 hp_globals.ignored_function_filter[idx] |= INDEX_2_BIT(hash);
             }
@@ -390,26 +390,35 @@ static void hp_register_constants(INIT_FUNC_ARGS) {
 }
 
 /**
- * A hash function to calculate a 8-bit hash code for a function name.
- * This is based on a small modification to 'zend_inline_hash_func' by summing
- * up all bytes of the ulong returned by 'zend_inline_hash_func'.
- *
- * @param str, char *, string to be calculated hash code for.
+ * Inspired by zend_inline_hash_func()
  */
-static inline uint8 hp_inline_hash(char * str) {
-    ulong h = 5381;
-    uint i = 0;
-    uint8 res = 0;
+static zend_always_inline uint8 hp_inline_hash(char * str, size_t len) {
+    register zend_ulong h = Z_UL(5381);
 
-    while (*str) {
-        h += (h << 5);
-        h ^= (ulong) *str++;
+    /* variant with the hash unrolled eight times */
+    for (; len >= 8; len -= 8) {
+        h = ((h << 5) + h) + *str++;
+        h = ((h << 5) + h) + *str++;
+        h = ((h << 5) + h) + *str++;
+        h = ((h << 5) + h) + *str++;
+        h = ((h << 5) + h) + *str++;
+        h = ((h << 5) + h) + *str++;
+        h = ((h << 5) + h) + *str++;
+        h = ((h << 5) + h) + *str++;
+    }
+    switch (len) {
+        case 7: h = ((h << 5) + h) + *str++; /* fallthrough... */
+        case 6: h = ((h << 5) + h) + *str++; /* fallthrough... */
+        case 5: h = ((h << 5) + h) + *str++; /* fallthrough... */
+        case 4: h = ((h << 5) + h) + *str++; /* fallthrough... */
+        case 3: h = ((h << 5) + h) + *str++; /* fallthrough... */
+        case 2: h = ((h << 5) + h) + *str++; /* fallthrough... */
+        case 1: h = ((h << 5) + h) + *str++; break;
+        case 0: break;
+EMPTY_SWITCH_DEFAULT_CASE()
     }
 
-    for (i = 0; i < sizeof(ulong); i++) {
-        res += ((uint8 *)&h)[i];
-    }
-    return res;
+    return h % 256;
 }
 
 /**
@@ -420,7 +429,7 @@ static inline uint8 hp_inline_hash(char * str) {
  * @param result_len max size of result buf
  * @return total size of the function name returned in result_buf
  */
-void hp_get_entry_name(hp_entry_t *entry, smart_str *result) {
+static zend_always_inline void hp_get_entry_name(hp_entry_t *entry, smart_str *result) {
     smart_str_appendl(result, ZSTR_VAL(entry->name_hprof), ZSTR_LEN(entry->name_hprof));
     /* Add '@recurse_level' if required */
     if (entry->rlvl_hprof) {
@@ -443,7 +452,7 @@ void hp_get_entry_name(hp_entry_t *entry, smart_str *result) {
  * call to foo (implying the foo() is on the call stack some levels
  * above).
  */
-void hp_get_function_stack(hp_entry_t *entry, int level, smart_str *result) {
+static zend_always_inline void hp_get_function_stack(hp_entry_t *entry, int level, smart_str *result) {
     /* End recursion if we dont need deeper levels or we dont have any deeper
      * levels */
     if (!entry->prev_hprof || (level <= 1)) {
