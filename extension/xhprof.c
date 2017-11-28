@@ -93,27 +93,6 @@ PHP_INI_END()
 /* Init module */
 ZEND_GET_MODULE(xhprof)
 
-static zend_always_inline int hp_ignore_entry(const uint8 hash_code, const char *curr_func) {
-    int i;
-    char *name;
-
-    /* First check if ignoring functions is enabled */
-    if (hp_globals.ignored_function_names == NULL) {
-        return 0;
-    }
-
-    if (hp_globals.ignored_function_filter[INDEX_2_BYTE(hash_code)] & INDEX_2_BIT(hash_code)) {
-        for (i = 0; hp_globals.ignored_function_names[i] != NULL; ++i) {
-            name = hp_globals.ignored_function_names[i];
-            if (!strcmp(curr_func, name)) {
-                return 1;
-            }
-        }
-    }
-
-    return 0;
-}
-
 /**
  * begin function callback
  */
@@ -164,44 +143,36 @@ static zend_always_inline void hp_mode_common_beginfn(hp_entry_t **entries, hp_e
 /*
  * Start profiling - called just before calling the actual function
  */
-#define BEGIN_PROFILING(entries, symbol, profile_curr)                    \
+#define BEGIN_PROFILING(entries, symbol)                                  \
     do {                                                                  \
         /* Use a hash code to filter most of the string comparisons. */   \
         uint8 hash_code = hp_inline_hash(ZSTR_VAL(symbol), ZSTR_LEN(symbol)); \
-        profile_curr = !hp_ignore_entry(hash_code, ZSTR_VAL(symbol));     \
-        if (profile_curr) {                                               \
-            hp_entry_t *cur_entry = hp_fast_alloc_hprof_entry();          \
-            (cur_entry)->hash_code = hash_code;                           \
-            (cur_entry)->name_hprof = symbol;                             \
-            (cur_entry)->prev_hprof = (*(entries));                       \
-            /* Call the universal callback */                             \
-            hp_mode_common_beginfn((entries), (cur_entry));               \
-            /* Call the mode's beginfn callback */                        \
-            hp_mode_beginfn_cb(cur_entry);                                \
-            /* Update entries linked list */                              \
-            (*(entries)) = (cur_entry);                                   \
-        } else {                                                          \
-            zend_string_free(symbol);                                     \
-            symbol = NULL;                                                \
-        }                                                                 \
+        hp_entry_t *cur_entry = hp_fast_alloc_hprof_entry();              \
+        (cur_entry)->hash_code = hash_code;                               \
+        (cur_entry)->name_hprof = symbol;                                 \
+        (cur_entry)->prev_hprof = (*(entries));                           \
+        /* Call the universal callback */                                 \
+        hp_mode_common_beginfn((entries), (cur_entry));                   \
+        /* Call the mode's beginfn callback */                            \
+        hp_mode_beginfn_cb(cur_entry);                                    \
+        /* Update entries linked list */                                  \
+        (*(entries)) = (cur_entry);                                       \
     } while (0)
 
 /*
  * Stop profiling - called just after calling the actual function
  */
-#define END_PROFILING(entries, profile_curr)                              \
-    do {                                                                  \
-        if (profile_curr) {                                               \
-            hp_entry_t *cur_entry;                                        \
-            /* Call the mode's endfn callback. */                         \
-            hp_mode_endfn_cb((entries));                                  \
-            cur_entry = (*(entries));                                     \
-            /* Call the universal callback */                             \
-            hp_globals.func_hash_counters[(cur_entry)->hash_code]--;      \
-            /* Free top entry and update entries linked list */           \
-            (*(entries)) = (*(entries))->prev_hprof;                      \
-            hp_fast_free_hprof_entry(cur_entry);                          \
-        }                                                                 \
+#define END_PROFILING(entries)                                        \
+    do {                                                              \
+        hp_entry_t *cur_entry;                                        \
+        /* Call the mode's endfn callback. */                         \
+        hp_mode_endfn_cb((entries));                                  \
+        cur_entry = (*(entries));                                     \
+        /* Call the universal callback */                             \
+        hp_globals.func_hash_counters[(cur_entry)->hash_code]--;      \
+        /* Free top entry and update entries linked list */           \
+        (*(entries)) = (*(entries))->prev_hprof;                      \
+        hp_fast_free_hprof_entry(cur_entry);                          \
     } while (0)
 
 /**
@@ -218,17 +189,13 @@ static zend_always_inline void hp_mode_common_beginfn(hp_entry_t **entries, hp_e
 PHP_FUNCTION(xhprof_enable) {
     /* XHProf flags */
     long xhprof_flags = 0;
-    /* optional array arg: for future use */
-    zval *optional_array = NULL;
     zend_string *root_symbol;
 
-    if (zend_parse_parameters(ZEND_NUM_ARGS(), "|lz", &xhprof_flags, &optional_array) == FAILURE) {
+    if (zend_parse_parameters(ZEND_NUM_ARGS(), "|l", &xhprof_flags) == FAILURE) {
         return;
     }
 
     if (!hp_globals.enabled) {
-        int hp_profile_flag = 1;
-
         hp_globals.enabled = 1;
         hp_globals.xhprof_flags = (uint32)xhprof_flags;
 
@@ -247,20 +214,9 @@ PHP_FUNCTION(xhprof_enable) {
         hp_globals.stats_count = (zval *)emalloc(sizeof(zval));
         array_init(hp_globals.stats_count);
 
-        /* Set up filter of functions which may be ignored during profiling */
-        if (hp_globals.ignored_function_names != NULL) {
-            int i = 0;
-            for(; hp_globals.ignored_function_names[i] != NULL; i++) {
-                char *str = hp_globals.ignored_function_names[i];
-                uint8 hash = hp_inline_hash(str, strlen(str));
-                int idx = INDEX_2_BYTE(hash);
-                hp_globals.ignored_function_filter[idx] |= INDEX_2_BIT(hash);
-            }
-        }
-
         root_symbol = zend_string_init(ROOT_SYMBOL, sizeof(ROOT_SYMBOL) - 1, 0);
 
-        BEGIN_PROFILING(&hp_globals.entries, root_symbol, hp_profile_flag);
+        BEGIN_PROFILING(&hp_globals.entries, root_symbol);
     }
 }
 
@@ -351,8 +307,6 @@ PHP_RSHUTDOWN_FUNCTION(xhprof) {
 
         hp_globals.entries = NULL;
         hp_globals.ever_enabled = 0;
-
-        hp_globals.ignored_function_names = NULL;
     }
 
     /* free any remaining items */
@@ -652,7 +606,6 @@ static zend_always_inline void hp_mode_endfn_cb(hp_entry_t **entries) {
  */
 ZEND_DLEXPORT void hp_execute_ex(zend_execute_data *execute_data) {
     zend_string *func = NULL;
-    int hp_profile_flag = 1;
 
     zend_class_entry *called_scope;
     called_scope = zend_get_called_scope(execute_data);
@@ -686,10 +639,10 @@ ZEND_DLEXPORT void hp_execute_ex(zend_execute_data *execute_data) {
         return;
     }
 
-    BEGIN_PROFILING(&hp_globals.entries, func, hp_profile_flag);
+    BEGIN_PROFILING(&hp_globals.entries, func);
     _zend_execute_ex(execute_data);
     if (hp_globals.entries) {
-        END_PROFILING(&hp_globals.entries, hp_profile_flag);
+        END_PROFILING(&hp_globals.entries);
     }
 }
 
@@ -703,7 +656,6 @@ ZEND_DLEXPORT void hp_execute_ex(zend_execute_data *execute_data) {
 
 ZEND_DLEXPORT void hp_execute_internal(zend_execute_data *execute_data, zval *ret) {
     zend_string *func = NULL;
-    int hp_profile_flag = 1;
 
     if (!hp_globals.enabled || (hp_globals.xhprof_flags & XHPROF_FLAGS_NO_BUILTINS)) {
         execute_internal(execute_data, ret);
@@ -726,7 +678,7 @@ ZEND_DLEXPORT void hp_execute_internal(zend_execute_data *execute_data, zval *re
     }
 
     if (func) {
-        BEGIN_PROFILING(&hp_globals.entries, func, hp_profile_flag);
+        BEGIN_PROFILING(&hp_globals.entries, func);
     }
 
     if (!_zend_execute_internal) {
@@ -740,7 +692,7 @@ ZEND_DLEXPORT void hp_execute_internal(zend_execute_data *execute_data, zval *re
     }
 
     if (func && hp_globals.entries) {
-        END_PROFILING(&hp_globals.entries, hp_profile_flag);
+        END_PROFILING(&hp_globals.entries);
     }
 }
 
@@ -751,7 +703,6 @@ ZEND_DLEXPORT zend_op_array* hp_compile_file(zend_file_handle *file_handle, int 
     const char *filename;
     size_t len;
     zend_op_array *ret;
-    int hp_profile_flag = 1;
     zend_string *func_name;
 
     filename = hp_get_base_filename(file_handle->filename);
@@ -761,21 +712,19 @@ ZEND_DLEXPORT zend_op_array* hp_compile_file(zend_file_handle *file_handle, int 
 
     ZSTR_LEN(func_name) = snprintf(ZSTR_VAL(func_name), len + 1, "load::%s", filename);
 
-    BEGIN_PROFILING(&hp_globals.entries, func_name, hp_profile_flag);
+    BEGIN_PROFILING(&hp_globals.entries, func_name);
     ret = _zend_compile_file(file_handle, type);
     if (hp_globals.entries) {
-        END_PROFILING(&hp_globals.entries, hp_profile_flag);
+        END_PROFILING(&hp_globals.entries);
     }
 
     return ret;
 }
 
 static void hp_stop() {
-    int hp_profile_flag = 1;
-
     /* End any unfinished calls */
     while (hp_globals.entries) {
-        END_PROFILING(&hp_globals.entries, hp_profile_flag);
+        END_PROFILING(&hp_globals.entries);
     }
 
     /* Stop profiling */

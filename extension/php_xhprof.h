@@ -58,10 +58,6 @@ extern zend_module_entry xhprof_module_entry;
 /* gather memory usage for funcs */
 #define XHPROF_FLAGS_MEMORY 0x0004
 
-/* Constant for ignoring functions, transparent to hierarchical profile */
-#define XHPROF_MAX_IGNORED_FUNCTIONS 256
-#define XHPROF_IGNORED_FUNCTION_FILTER_SIZE ((XHPROF_MAX_IGNORED_FUNCTIONS + 7)/8)
-
 #if !defined(uint64)
 typedef unsigned long long uint64;
 #endif
@@ -134,15 +130,7 @@ typedef struct hp_global_t {
     /* counter table indexed by hash value of function names. */
     uint8 func_hash_counters[256];
 
-    /* Table of ignored function names and their filter */
-    char **ignored_function_names;
-    uint8 ignored_function_filter[XHPROF_IGNORED_FUNCTION_FILTER_SIZE];
-
 } hp_global_t;
-
-/* Bloom filter for function names to be ignored */
-#define INDEX_2_BYTE(index) (index >> 3)
-#define INDEX_2_BIT(index) (1 << (index & 0x7))
 
 /**
  * ***************************
