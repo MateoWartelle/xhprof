@@ -93,7 +93,7 @@ PHP_INI_END()
 /* Init module */
 ZEND_GET_MODULE(xhprof)
 
-static inline int hp_ignore_entry(uint8 hash_code, char *curr_func) {
+static zend_always_inline int hp_ignore_entry(const uint8 hash_code, const char *curr_func) {
     int i;
     char *name;
 
@@ -117,7 +117,7 @@ static inline int hp_ignore_entry(uint8 hash_code, char *curr_func) {
 /**
  * begin function callback
  */
-void hp_mode_beginfn_cb(hp_entry_t **entries, hp_entry_t *current) {
+static zend_always_inline void hp_mode_beginfn_cb(hp_entry_t *current) {
     current->timer_start = cycle_timer();
 
     /* Get CPU usage */
@@ -140,7 +140,7 @@ void hp_mode_beginfn_cb(hp_entry_t **entries, hp_entry_t *current) {
  * @param hp_entry_t **entries linked list (stack) of hprof entries
  * @param hp_entry_t *current hprof entry for the current fn
  */
-void hp_mode_common_beginfn(hp_entry_t **entries, hp_entry_t *current) {
+static zend_always_inline void hp_mode_common_beginfn(hp_entry_t **entries, hp_entry_t *current) {
     hp_entry_t *p;
 
     /* This symbol's recursive level */
@@ -149,7 +149,7 @@ void hp_mode_common_beginfn(hp_entry_t **entries, hp_entry_t *current) {
     if (hp_globals.func_hash_counters[current->hash_code] > 0) {
         /* Find this symbols recurse level */
         for(p = (*entries); p; p = p->prev_hprof) {
-            if (!strcmp(current->name_hprof->val, p->name_hprof->val)) {
+            if (!strcmp(ZSTR_VAL(current->name_hprof), ZSTR_VAL(p->name_hprof))) {
                 recurse_level = (p->rlvl_hprof) + 1;
                 break;
             }
@@ -167,8 +167,8 @@ void hp_mode_common_beginfn(hp_entry_t **entries, hp_entry_t *current) {
 #define BEGIN_PROFILING(entries, symbol, profile_curr)                    \
     do {                                                                  \
         /* Use a hash code to filter most of the string comparisons. */   \
-        uint8 hash_code = hp_inline_hash(symbol->val, symbol->len);       \
-        profile_curr = !hp_ignore_entry(hash_code, symbol->val);          \
+        uint8 hash_code = hp_inline_hash(ZSTR_VAL(symbol), ZSTR_LEN(symbol)); \
+        profile_curr = !hp_ignore_entry(hash_code, ZSTR_VAL(symbol));     \
         if (profile_curr) {                                               \
             hp_entry_t *cur_entry = hp_fast_alloc_hprof_entry();          \
             (cur_entry)->hash_code = hash_code;                           \
@@ -177,7 +177,7 @@ void hp_mode_common_beginfn(hp_entry_t **entries, hp_entry_t *current) {
             /* Call the universal callback */                             \
             hp_mode_common_beginfn((entries), (cur_entry));               \
             /* Call the mode's beginfn callback */                        \
-            hp_mode_beginfn_cb((entries), (cur_entry));                   \
+            hp_mode_beginfn_cb(cur_entry);                                \
             /* Update entries linked list */                              \
             (*(entries)) = (cur_entry);                                   \
         } else {                                                          \
@@ -422,57 +422,6 @@ EMPTY_SWITCH_DEFAULT_CASE()
 }
 
 /**
- * Returns formatted function name
- *
- * @param entryhp_entry
- * @param result_buf ptr to result buf
- * @param result_len max size of result buf
- * @return total size of the function name returned in result_buf
- */
-static zend_always_inline void hp_get_entry_name(hp_entry_t *entry, smart_str *result) {
-    smart_str_appendl(result, ZSTR_VAL(entry->name_hprof), ZSTR_LEN(entry->name_hprof));
-    /* Add '@recurse_level' if required */
-    if (entry->rlvl_hprof) {
-        smart_str_appendc(result, '@');
-        smart_str_append_long(result, entry->rlvl_hprof);
-    }
-
-    smart_str_0(result);
-}
-
-/**
- * Build a caller qualified name for a callee.
- *
- * For example, if A() is caller for B(), then it returns "A==>B".
- * Recursive invokations are denoted with @<n> where n is the recursion
- * depth.
- *
- * For example, "foo==>foo@1", and "foo@2==>foo@3" are examples of direct
- * recursion. And "bar==>foo@1" is an example of an indirect recursive
- * call to foo (implying the foo() is on the call stack some levels
- * above).
- */
-static zend_always_inline void hp_get_function_stack(hp_entry_t *entry, int level, smart_str *result) {
-    /* End recursion if we dont need deeper levels or we dont have any deeper
-     * levels */
-    if (!entry->prev_hprof || (level <= 1)) {
-        hp_get_entry_name(entry, result);
-        return;
-    }
-
-    /* Take care of all ancestors first */
-    hp_get_function_stack(entry->prev_hprof, level - 1, result);
-
-    /* Add delimiter only if entry had ancestors */
-    if (result->a > 0) {
-        smart_str_appendl(result, "==>", sizeof("==>") - 1);
-    }
-
-    /* Append the current function name */
-    hp_get_entry_name(entry, result);
-}
-
-/**
  * Takes an input of the form /a/b/c/d/foo.php and returns
  * a pointer to one-level directory and basefile name
  * (d/foo.php) in the same string.
@@ -522,7 +471,7 @@ static void hp_free_list(hp_entry_t *p) {
  *
  * Doesn't bother initializing allocated memory.
  */
-static hp_entry_t *hp_fast_alloc_hprof_entry() {
+static zend_always_inline hp_entry_t *hp_fast_alloc_hprof_entry() {
     hp_entry_t *p;
 
     p = hp_globals.entry_free_list;
@@ -546,7 +495,7 @@ static hp_entry_t *hp_fast_alloc_hprof_entry() {
  * the hp_entry_t to a free list and doesn't actually
  * perform the free.
  */
-static void hp_fast_free_hprof_entry(hp_entry_t *p) {
+static zend_always_inline void hp_fast_free_hprof_entry(hp_entry_t *p) {
 
     /* we use/overload the prev_hprof field in the structure to link entries in
      * the free list. */
@@ -562,10 +511,8 @@ static void hp_fast_free_hprof_entry(hp_entry_t *p) {
  * @param char *name Name of the stat
  * @param long count Value of the stat to incr by
  */
-void hp_inc_count(zval *counts, char *name, size_t len, long count) {
+static zend_always_inline void hp_inc_count(zval *counts, const char *name, size_t len, long count) {
     zval *data;
-
-    if (!counts) return;
 
     if ((data = zend_hash_str_find(Z_ARRVAL_P(counts), name, len)) != NULL) {
         Z_LVAL_P(data) += count;
@@ -585,7 +532,7 @@ void hp_inc_count(zval *counts, char *name, size_t len, long count) {
  *
  * @return 64 bit unsigned integer
  */
-static inline uint64 cycle_timer() {
+static zend_always_inline uint64 cycle_timer() {
     struct timespec s;
     clock_gettime(CLOCK_MONOTONIC, &s);
 
@@ -595,7 +542,7 @@ static inline uint64 cycle_timer() {
 /**
  * Get time delta in microseconds.
  */
-static long get_us_interval(struct timeval *start, struct timeval *end) {
+static zend_always_inline long get_us_interval(struct timeval *start, struct timeval *end) {
     return (((end->tv_sec - start->tv_sec) * 1000000) + (end->tv_usec - start->tv_usec));
 }
 
@@ -608,31 +555,45 @@ static long get_us_interval(struct timeval *start, struct timeval *end) {
 /**
  * end function callback
  */
-void hp_mode_endfn_cb(hp_entry_t **entries) {
+static zend_always_inline void hp_mode_endfn_cb(hp_entry_t **entries) {
     hp_entry_t *top = (*entries);
     struct rusage ru_end;
     smart_str symbol = {0};
-    long int mu_end;
-    long int pmu_end;
 
     /********/
     zval count_val;
-    zval *counts;
-    uint64 timer_end;
-    HashTable *ht;
+    zval *counts, *data;
 
     /* Bail if something is goofy */
-    if (!hp_globals.stats_count || !(ht = HASH_OF(hp_globals.stats_count))) {
+    if (!hp_globals.stats_count) {
         return;
     }
 
     /* Get the stat array */
-    hp_get_function_stack(top, 2, &symbol);
+    if (top->prev_hprof) {
+        /* Take care of ancestor first */
+        smart_str_appendl(&symbol, ZSTR_VAL(top->prev_hprof->name_hprof), ZSTR_LEN(top->prev_hprof->name_hprof));
+        /* Add '@recurse_level' if required */
+        if (top->prev_hprof->rlvl_hprof) {
+            smart_str_appendc(&symbol, '@');
+            smart_str_append_long(&symbol, top->prev_hprof->rlvl_hprof);
+        }
 
-    timer_end = cycle_timer();
+        smart_str_appendl(&symbol, "==>", sizeof("==>") - 1);
+    }
+
+    /* Append the current function name */
+    smart_str_appendl(&symbol, ZSTR_VAL(top->name_hprof), ZSTR_LEN(top->name_hprof));
+    /* Add '@recurse_level' if required */
+    if (top->rlvl_hprof) {
+        smart_str_appendc(&symbol, '@');
+        smart_str_append_long(&symbol, top->rlvl_hprof);
+    }
+
+    smart_str_0(&symbol);
 
     /* Lookup our hash table */
-    if ((counts = zend_hash_str_find(ht, ZSTR_VAL(symbol.s), ZSTR_LEN(symbol.s))) == NULL) {
+    if ((counts = zend_hash_str_find(Z_ARRVAL_P(hp_globals.stats_count), ZSTR_VAL(symbol.s), ZSTR_LEN(symbol.s))) == NULL) {
         /* Add symbol to hash table */
         counts = &count_val;
         array_init(counts);
@@ -640,31 +601,39 @@ void hp_mode_endfn_cb(hp_entry_t **entries) {
     }
 
     /* Bump stats in the counts hashtable */
-    hp_inc_count(counts, "ct", 2, 1);
-    hp_inc_count(counts, "wt", 2, timer_end - top->timer_start);
 
-    if (hp_globals.xhprof_flags & XHPROF_FLAGS_CPU) {
-        /* Get CPU usage */
-        getrusage(RUSAGE_SELF, &ru_end);
+    if ((data = zend_hash_str_find(Z_ARRVAL_P(counts), "ct", 2)) != NULL) {
+        ++Z_LVAL_P(data);
+        Z_LVAL_P(zend_hash_str_find(Z_ARRVAL_P(counts), "wt", 2)) += cycle_timer() - top->timer_start;
 
-        /* Bump CPU stats in the counts hashtable */
-        hp_inc_count(counts, "cpu", 3,
-            (
+        if (hp_globals.xhprof_flags & XHPROF_FLAGS_CPU) {
+            getrusage(RUSAGE_SELF, &ru_end);
+
+            Z_LVAL_P(zend_hash_str_find(Z_ARRVAL_P(counts), "cpu", 3)) +=
                 get_us_interval(&(top->ru_start_hprof.ru_utime), &(ru_end.ru_utime)) +
-                get_us_interval(&(top->ru_start_hprof.ru_stime), &(ru_end.ru_stime))
-            )
-        );
-    }
+                get_us_interval(&(top->ru_start_hprof.ru_stime), &(ru_end.ru_stime));
+        }
 
-    if (hp_globals.xhprof_flags & XHPROF_FLAGS_MEMORY) {
-        /* Get Memory usage */
-        mu_end = zend_memory_usage(0);
-        pmu_end = zend_memory_peak_usage(0);
+        if (hp_globals.xhprof_flags & XHPROF_FLAGS_MEMORY) {
+            Z_LVAL_P(zend_hash_str_find(Z_ARRVAL_P(counts), "mu", 2)) += zend_memory_usage(0) - top->mu_start_hprof;
+            Z_LVAL_P(zend_hash_str_find(Z_ARRVAL_P(counts), "pmu", 3)) += zend_memory_peak_usage(0) - top->pmu_start_hprof;
+        }
+    } else {
+        add_assoc_long_ex(counts, "ct", 2, 1);
+        add_assoc_long_ex(counts, "wt", 2, cycle_timer() - top->timer_start);
 
-        /* Bump Memory stats in the counts hashtable */
+        if (hp_globals.xhprof_flags & XHPROF_FLAGS_CPU) {
+            getrusage(RUSAGE_SELF, &ru_end);
 
-        hp_inc_count(counts, "mu", 2, mu_end - top->mu_start_hprof);
-        hp_inc_count(counts, "pmu", 3, pmu_end - top->pmu_start_hprof);
+            add_assoc_long_ex(counts, "cpu", 3,
+                get_us_interval(&(top->ru_start_hprof.ru_utime), &(ru_end.ru_utime)) +
+                get_us_interval(&(top->ru_start_hprof.ru_stime), &(ru_end.ru_stime)));
+        }
+
+        if (hp_globals.xhprof_flags & XHPROF_FLAGS_MEMORY) {
+            add_assoc_long_ex(counts, "mu", 2, zend_memory_usage(0) - top->mu_start_hprof);
+            add_assoc_long_ex(counts, "pmu", 3, zend_memory_peak_usage(0) - top->pmu_start_hprof);
+        }
     }
 
     smart_str_free(&symbol);
@@ -691,26 +660,24 @@ ZEND_DLEXPORT void hp_execute_ex(zend_execute_data *execute_data) {
     func = execute_data->func->common.function_name;
     /* check if was in a class */
     if (called_scope != NULL && func != NULL) {
-        //this is a class method;
-        zend_string *class_name = called_scope->name;
         zend_string *func_name = func;
 
-        int class_name_len = class_name->len;
-        func = zend_string_init(class_name->val, class_name_len + 2 + func_name->len, 0);
-        memcpy(func->val + class_name_len, "::", 2);
-        memcpy(func->val + class_name_len + 2, func_name->val, func_name->len);
+        int class_name_len = ZSTR_LEN(called_scope->name);
+        func = zend_string_init(ZSTR_VAL(called_scope->name), class_name_len + 2 + ZSTR_LEN(func_name), 0);
+        memcpy(ZSTR_VAL(func) + class_name_len, "::", 2);
+        memcpy(ZSTR_VAL(func) + class_name_len + 2, ZSTR_VAL(func_name), ZSTR_LEN(func_name));
     } else if (func) {
         //just do the copy;
-        func = zend_string_init(func->val, func->len, 0);
+        func = zend_string_init(ZSTR_VAL(func), ZSTR_LEN(func), 0);
     } else if (execute_data->literals->u1.type_info == 4) {
 
         //could include, not sure others has the same value
         //This is fucking dam ugly
         zend_string *filename = execute_data->func->op_array.filename;
 
-        int run_init_len = sizeof("run_init::") - 1;
-        func = zend_string_init("run_init::", run_init_len + filename->len, 0);
-        memcpy(func->val + run_init_len, filename->val, filename->len);
+        const int run_init_len = sizeof("run_init::") - 1;
+        func = zend_string_init("run_init::", run_init_len + ZSTR_LEN(filename), 0);
+        memcpy(ZSTR_VAL(func) + run_init_len, ZSTR_VAL(filename), ZSTR_LEN(filename));
     }
 
     if (!func || hp_globals.enabled == 0) {
@@ -747,16 +714,15 @@ ZEND_DLEXPORT void hp_execute_internal(zend_execute_data *execute_data, zval *re
 
     //check is a class method
     if (execute_data->func->op_array.scope != NULL) {
-        zend_string *class_name = execute_data->func->op_array.scope->name;
         zend_string *func_name = func;
 
-        int class_name_len = class_name->len;
-        func = zend_string_init(class_name->val, class_name_len + 2 + func_name->len, 0);
-        memcpy(func->val + class_name_len, "::", 2);
-        memcpy(func->val + class_name_len + 2, func_name->val, func_name->len);
+        int class_name_len = ZSTR_LEN(execute_data->func->op_array.scope->name);
+        func = zend_string_init(ZSTR_VAL(execute_data->func->op_array.scope->name), class_name_len + 2 + ZSTR_LEN(func_name), 0);
+        memcpy(ZSTR_VAL(func) + class_name_len, "::", 2);
+        memcpy(ZSTR_VAL(func) + class_name_len + 2, ZSTR_VAL(func_name), ZSTR_LEN(func_name));
     } else if (func) {
         //just do the copy;
-        func = zend_string_init(func->val, func->len, 0);
+        func = zend_string_init(ZSTR_VAL(func), ZSTR_LEN(func), 0);
     }
 
     if (func) {
