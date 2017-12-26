@@ -78,7 +78,7 @@ PHP_FUNCTION(xhprof_enable);
 PHP_FUNCTION(xhprof_disable);
 
 /* XHProf maintains a stack of entries being profiled. The memory for the entry
- * is passed by the layer that invokes BEGIN_PROFILING(), e.g. the hp_execute()
+ * is passed by the layer that invokes begin_profiling(), e.g. the hp_execute()
  * function. Often, this is just C-stack memory.
  *
  * This structure is a convenient place to track start time of a particular
@@ -88,15 +88,15 @@ typedef struct hp_entry_t {
     /* function name */
     zend_string *name_hprof;
     /* recursion level for function */
-    int rlvl_hprof;
+    unsigned int rlvl_hprof;
     /* start value for timer */
     uint64 timer_start;
     /* memory usage */
-    long int mu_start_hprof;
+    size_t mu_start_hprof;
     /* peak memory usage */
-    long int pmu_start_hprof;
+    size_t pmu_start_hprof;
     /* user/sys time start */
-    struct rusage ru_start_hprof;
+    struct timeval ru_start_hprof;
     /* ptr to prev entry being profiled */
     struct hp_entry_t *prev_hprof;
     /* hash_code for the function name */
@@ -161,9 +161,7 @@ static void hp_stop();
 static inline uint64 cycle_timer();
 
 static void hp_free_list();
-static hp_entry_t *hp_fast_alloc_hprof_entry();
-static void hp_fast_free_hprof_entry(hp_entry_t *p);
 static inline uint8 hp_inline_hash(char * str, size_t len);
-static long get_us_interval(struct timeval *start, struct timeval *end);
+static zend_long get_us_interval(const struct timeval *start, const struct timeval *end);
 
 #endif /* PHP_XHPROF_H */
