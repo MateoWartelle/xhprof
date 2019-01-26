@@ -1,10 +1,4 @@
-# xhprof for PHP7
-
-Please do not use this in an production env.
-
-生产环境勿用。
-代码简直没法看。
-
+# Maintained xhprof for PHP 7.0, 7.1, 7.2 and 7.3
 
 ## Install
 
@@ -20,5 +14,5 @@ extension=xhprof.so
 ```
 make sure it works:
 ```
-php7 -m |grep xhprof
+php -m |grep xhprof
 ```
