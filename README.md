@@ -1,4 +1,4 @@
-# Maintained xhprof for PHP 7.0, 7.1, 7.2 and 7.3
+# Maintained xhprof for PHP 7.0, 7.1, 7.2, 7.3, 8.0, 8.1
 
 ## Install
 

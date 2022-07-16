@@ -151,7 +151,7 @@ class XHProfRuns_Default implements iXHProfRuns {
         $files = glob("{$this->dir}/*.{$this->suffix}");
         $func = function($a, $b){
           return filemtime($b) - filemtime($a);
-        }
+        };
         usort($files, $func);
         foreach ($files as $file) {
             list($run,$source) = explode('.', basename($file));
